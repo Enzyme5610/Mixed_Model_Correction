@@ -2,7 +2,6 @@ library(shiny)
 library(bslib)
 library(lme4)
 library(car)
-library(emmeans)
 
 # ---- Helpers ---------------------------------------------------------------
 
@@ -20,30 +19,25 @@ guess_col <- function(cols, want) {
   if (length(hit)) hit[1] else cols[1]
 }
 
-random_terms <- function(choice, line, batch) {
-  switch(choice,
-    nested  = sprintf("(1|%s/%s)", line, batch),
-    crossed = c(sprintf("(1|%s)", line), sprintf("(1|%s)", batch)),
-    line    = sprintf("(1|%s)", line),
-    batch   = sprintf("(1|%s)", batch)
-  )
-}
-
-fit_one <- function(gene, dat, tx, rand) {
-  out <- list(gene = gene, fit = NULL, anova = NULL, note = "")
-  if (!gene %in% names(dat)) {
+# Same model and test as the original script:
+#   f <- reformulate(c("Tx", "(1|Line/Batch)"), var)
+#   MM_Form <- lmer(f, data = datos)
+#   Anova(MM_Form, type = "II", test = "F")
+fit_one <- function(var, datos, tx, line, batch) {
+  out <- list(gene = var, anova = NULL, note = "")
+  if (!var %in% names(datos)) {
     out$note <- "Column not found in file"
     return(out)
   }
-  if (!is.numeric(dat[[gene]])) {
+  if (!is.numeric(datos[[var]])) {
     out$note <- "Column is not numeric"
     return(out)
   }
-  f <- reformulate(c(tx, rand), gene)
+  f <- reformulate(c(tx, sprintf("(1|%s/%s)", line, batch)), var)
   warn <- character()
-  fit <- tryCatch(
+  MM_Form <- tryCatch(
     withCallingHandlers(
-      suppressMessages(lmer(f, data = dat)),
+      suppressMessages(lmer(f, data = datos)),
       warning = function(w) {
         warn <<- c(warn, conditionMessage(w))
         invokeRestart("muffleWarning")
@@ -51,17 +45,15 @@ fit_one <- function(gene, dat, tx, rand) {
     ),
     error = function(e) e
   )
-  if (inherits(fit, "error")) {
-    out$note <- paste("Model failed:", conditionMessage(fit))
+  if (inherits(MM_Form, "error")) {
+    out$note <- paste("Model failed:", conditionMessage(MM_Form))
     return(out)
   }
-  out$fit <- fit
-  # Type II Wald F test with Kenward-Roger df (same as the original script).
   out$anova <- tryCatch(
-    Anova(fit, type = "II", test.statistic = "F"),
+    Anova(MM_Form, type = "II", test = "F"),
     error = function(e) e
   )
-  notes <- c(if (isSingular(fit)) "Singular fit (a random-effect variance is ~0)", warn)
+  notes <- c(if (isSingular(MM_Form)) "Singular fit (a random-effect variance is ~0)", warn)
   if (inherits(out$anova, "error")) {
     notes <- c(notes, paste("ANOVA failed:", conditionMessage(out$anova)))
     out$anova <- NULL
@@ -80,9 +72,7 @@ summarise_results <- function(res, tx) {
     data.frame(Gene = r$gene, F = a[tx, "F"], NumDF = a[tx, "Df"],
                DenDF = a[tx, "Df.res"], p = a[tx, "Pr(>F)"], Note = r$note)
   })
-  out <- do.call(rbind, rows)
-  out$p_BH <- p.adjust(out$p, method = "BH")
-  out[, c("Gene", "F", "NumDF", "DenDF", "p", "p_BH", "Note")]
+  do.call(rbind, rows)
 }
 
 # ---- UI --------------------------------------------------------------------
@@ -98,17 +88,10 @@ ui <- page_sidebar(
                   placeholder = "GRIA1, GRIA2, GRIN1, GAD1 ...", rows = 5),
     actionLink("all_numeric", "Fill with all numeric columns"),
     hr(),
-    tags$b("3. Model"),
+    tags$b("3. Columns"),
     selectInput("tx", "Treatment (fixed effect)", choices = NULL),
     selectInput("line", "Line (random effect)", choices = NULL),
-    selectInput("batch", "Batch (random effect)", choices = NULL),
-    radioButtons("rand", "Random-effect structure", choices = c(
-      "Batch nested in Line: (1|Line/Batch)" = "nested",
-      "Line and Batch crossed: (1|Line) + (1|Batch)" = "crossed",
-      "Line only: (1|Line)" = "line",
-      "Batch only: (1|Batch)" = "batch"
-    )),
-    checkboxInput("pairwise", "Pairwise treatment comparisons (emmeans, Tukey)", FALSE),
+    selectInput("batch", "Batch (random effect, nested in Line)", choices = NULL),
     actionButton("run", "Run models", class = "btn-primary")
   ),
   navset_card_tab(
@@ -118,17 +101,16 @@ ui <- page_sidebar(
       downloadButton("dl_summary", "Download summary (.csv)")
     ),
     nav_panel("Full ANOVA output", verbatimTextOutput("full")),
-    nav_panel("Pairwise comparisons", verbatimTextOutput("pairs")),
     nav_panel("Data preview", tableOutput("preview")),
     nav_panel("About",
       markdown("
 Each gene/parameter is fit with a linear mixed model
 
-`value ~ Treatment + (1 | Line/Batch)`
+`value ~ Tx + (1 | Line/Batch)`
 
-using **lme4**. Treatment is tested with a Type II Wald F test with
-Kenward-Roger degrees of freedom (`car::Anova(type = 'II', test.statistic = 'F')`).
-`p_BH` is the Benjamini-Hochberg adjusted p-value across all genes tested in the run.
+using **lme4**, and Treatment is tested with
+`car::Anova(type = 'II', test = 'F')` (Type II Wald F test with
+Kenward-Roger degrees of freedom).
 
 **Data format:** one row per sample, with columns for Treatment, Line and
 Batch plus one numeric column per gene/parameter. Column names are converted
@@ -162,23 +144,22 @@ server <- function(input, output, session) {
   })
 
   results <- eventReactive(input$run, {
-    d <- dat()
-    genes <- parse_genes(input$genes)
-    validate(need(length(genes) > 0, "Enter at least one gene/parameter."))
+    datos <- dat()
+    MM_Vars <- parse_genes(input$genes)
+    validate(need(length(MM_Vars) > 0, "Enter at least one gene/parameter."))
     factors <- c(input$tx, input$line, input$batch)
     validate(need(!anyDuplicated(factors),
                   "Treatment, Line and Batch must be different columns."))
-    for (f in factors) d[[f]] <- as.factor(d[[f]])
-    rand <- random_terms(input$rand, input$line, input$batch)
+    for (f in factors) datos[[f]] <- as.factor(datos[[f]])
 
     res <- withProgress(message = "Fitting models", value = 0, {
-      lapply(seq_along(genes), function(i) {
-        incProgress(1 / length(genes), detail = genes[i])
-        fit_one(genes[i], d, input$tx, rand)
+      lapply(seq_along(MM_Vars), function(i) {
+        incProgress(1 / length(MM_Vars), detail = MM_Vars[i])
+        fit_one(MM_Vars[i], datos, input$tx, input$line, input$batch)
       })
     })
-    list(res = res, tx = input$tx, pairwise = input$pairwise,
-         formula = paste("gene ~", paste(c(input$tx, rand), collapse = " + ")))
+    list(res = res, tx = input$tx,
+         formula = sprintf("gene ~ %s + (1|%s/%s)", input$tx, input$line, input$batch))
   })
 
   summary_df <- reactive(summarise_results(results()$res, results()$tx))
@@ -188,29 +169,15 @@ server <- function(input, output, session) {
   })
 
   output$summary <- renderTable(summary_df(), digits = 4, na = "",
-                                display = c("s", "s", "f", "d", "g", "g", "g", "s"))
+                                display = c("s", "s", "f", "d", "g", "g", "s"))
 
   output$full <- renderPrint({
     for (r in results()$res) {
-      cat("\n[1]", dQuote(r$gene, FALSE), "\n")
+      cat("\n")
+      print(r$gene)
       if (!is.null(r$anova)) print(r$anova)
       if (nzchar(r$note)) cat("Note:", r$note, "\n")
-    }
-  })
-
-  output$pairs <- renderPrint({
-    rr <- results()
-    if (!rr$pairwise) {
-      cat("Tick 'Pairwise treatment comparisons' and re-run to see these.\n")
-      return(invisible())
-    }
-    for (r in rr$res) {
-      cat("\n====", r$gene, "====\n")
-      if (is.null(r$fit)) { cat(r$note, "\n"); next }
-      em <- tryCatch(emmeans(r$fit, rr$tx), error = function(e) e)
-      if (inherits(em, "error")) { cat("emmeans failed:", conditionMessage(em), "\n"); next }
-      print(em)
-      print(pairs(em, adjust = "tukey"))
+      cat("\n")
     }
   })
 
