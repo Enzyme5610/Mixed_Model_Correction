@@ -31,8 +31,9 @@ jobs:
             any::shiny
             any::bslib
             any::lme4
-            any::car
+            any::lmerTest
             any::pbkrtest
+            any::emmeans
 
       - name: Build Shinylive site
         run: Rscript -e 'shinylive::export("app", "site")'
