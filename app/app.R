@@ -177,9 +177,19 @@ ui <- page_sidebar(
   title = "Mixed Model Correction",
   sidebar = sidebar(
     width = 320,
+    # Save files in the browser (Shinylive download links are unreliable)
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('save_file', function(m) {
+        const bytes = Uint8Array.from(atob(m.data), c => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], {type: m.type}));
+        const a = document.createElement('a');
+        a.href = url; a.download = m.name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      });")),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
     helpText("Needs columns named Tx, Line and Batch (exact spelling), in any position."),
-    downloadLink("example", "Download an example file"),
+    actionLink("example", "Download an example file"),
     hr(),
     selectizeInput("params", "2. Parameters to analyze", choices = NULL,
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
@@ -194,12 +204,12 @@ ui <- page_sidebar(
   navset_card_tab(
     nav_panel("ANOVA results",
       tableOutput("anova_table"),
-      downloadButton("dl_anova", "Download results (.csv)")
+      actionButton("dl_anova", "Download results (.csv)", icon = icon("download"))
     ),
     nav_panel("ANOVA output", verbatimTextOutput("anova_print")),
     nav_panel("Pairwise",
       tableOutput("pairs_table"),
-      downloadButton("dl_pairs", "Download pairwise (.csv)")
+      actionButton("dl_pairs", "Download pairwise (.csv)", icon = icon("download"))
     ),
     nav_panel("Plots", div(  # plain div: no fill layout
       layout_columns(
@@ -223,9 +233,9 @@ ui <- page_sidebar(
       ),
       plotOutput("plot", width = "auto", height = "auto", fill = FALSE),
       div(
-        downloadButton("dl_png", "PNG (this parameter)"),
-        downloadButton("dl_pdf", "PDF (this parameter)"),
-        downloadButton("dl_pdf_all", "PDF (all parameters)")
+        actionButton("dl_png", "PNG (this parameter)", icon = icon("download")),
+        actionButton("dl_pdf", "PDF (this parameter)", icon = icon("download")),
+        actionButton("dl_pdf_all", "PDF (all parameters)", icon = icon("download"))
       )
     )),
     nav_panel("Data preview", tableOutput("preview")),
@@ -332,51 +342,66 @@ server <- function(input, output, session) {
 
   output$preview <- renderTable(head(prep()$datos, 50))
 
-  output$dl_anova <- downloadHandler(
-    filename = function() paste0(results()$base, "_MM_KR_results.csv"),
-    content = function(file) write.csv(anova_df(), file, row.names = FALSE)
-  )
-
-  output$dl_pairs <- downloadHandler(
-    filename = function() paste0(results()$base, "_MM_KR_pairwise.csv"),
-    content = function(file) write.csv(pairs_df(), file, row.names = FALSE)
-  )
-
-  plot_name <- function(ext) {
-    paste0(results()$base, "_", make.names(input$plot_param), ".", ext)
+  save_file <- function(name, type, write) {
+    tmp <- tempfile()
+    write(tmp)
+    session$sendCustomMessage("save_file", list(
+      name = name, type = type,
+      data = jsonlite::base64_enc(readBin(tmp, "raw", file.size(tmp)))))
   }
 
-  output$dl_png <- downloadHandler(
-    filename = function() plot_name("png"),
-    content = function(file) {
-      d <- dims()
-      plotPNG(function() draw_plot(results()$prep$datos, current(), results()$adjust, opt()),
-              filename = file, width = d[["w"]] * 300, height = d[["h"]] * 300, res = 300)
-    }
-  )
+  # Results or NULL (with a hint) if models haven't run
+  ready <- function() {
+    r <- tryCatch(if (input$run > 0) results(), error = function(e) NULL)
+    if (is.null(r)) showNotification("Run the models first.", type = "warning")
+    r
+  }
 
-  output$dl_pdf <- downloadHandler(
-    filename = function() plot_name("pdf"),
-    content = function(file) {
-      pdf(file, width = dims()[["w"]], height = dims()[["h"]])
-      draw_plot(results()$prep$datos, current(), results()$adjust, opt())
+  observeEvent(input$dl_anova, {
+    r <- ready(); req(r)
+    save_file(paste0(r$base, "_MM_KR_results.csv"), "text/csv",
+              function(f) write.csv(anova_df(), f, row.names = FALSE))
+  })
+
+  observeEvent(input$dl_pairs, {
+    r <- ready(); req(r)
+    save_file(paste0(r$base, "_MM_KR_pairwise.csv"), "text/csv",
+              function(f) write.csv(pairs_df(), f, row.names = FALSE))
+  })
+
+  plot_name <- function(r, ext) paste0(r$base, "_", make.names(input$plot_param), ".", ext)
+
+  observeEvent(input$dl_png, {
+    r <- ready(); req(r)
+    d <- dims()
+    save_file(plot_name(r, "png"), "image/png", function(f) {
+      plotPNG(function() draw_plot(r$prep$datos, current(), r$adjust, opt()),
+              filename = f, width = d[["w"]] * 300, height = d[["h"]] * 300, res = 300)
+    })
+  })
+
+  observeEvent(input$dl_pdf, {
+    r <- ready(); req(r)
+    save_file(plot_name(r, "pdf"), "application/pdf", function(f) {
+      pdf(f, width = dims()[["w"]], height = dims()[["h"]])
+      draw_plot(r$prep$datos, current(), r$adjust, opt())
       dev.off()
-    }
-  )
+    })
+  })
 
-  output$dl_pdf_all <- downloadHandler(
-    filename = function() paste0(results()$base, "_MM_KR_plots.pdf"),
-    content = function(file) {
-      pdf(file, width = dims()[["w"]], height = dims()[["h"]])
-      for (x in results()$res) draw_plot(results()$prep$datos, x, results()$adjust, opt())
+  observeEvent(input$dl_pdf_all, {
+    r <- ready(); req(r)
+    save_file(paste0(r$base, "_MM_KR_plots.pdf"), "application/pdf", function(f) {
+      pdf(f, width = dims()[["w"]], height = dims()[["h"]])
+      for (x in r$res) draw_plot(r$prep$datos, x, r$adjust, opt())
       dev.off()
-    }
-  )
+    })
+  })
 
-  output$example <- downloadHandler(
-    filename = "example_data.csv",
-    content = function(file) file.copy("example_data.csv", file)
-  )
+  observeEvent(input$example, {
+    save_file("example_data.csv", "text/csv",
+              function(f) file.copy("example_data.csv", f))
+  })
 }
 
 shinyApp(ui, server)
