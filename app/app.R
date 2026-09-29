@@ -5,7 +5,7 @@ library(lmerTest)
 library(pbkrtest)
 library(emmeans)
 
-# ---- Model (colleague's Kenward-Roger script) ------------------------------
+# ---- Model (Kenward-Roger) ------------------------------
 
 # Reads and checks the CSV exactly as the script does. Returns the data with
 # formula-safe names plus the original parameter labels, or stops with the
