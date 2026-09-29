@@ -9,31 +9,38 @@ library(emmeans)
 
 prepare_data <- function(path) {
   datos <- read.csv(path, header = TRUE, check.names = FALSE)
-  if (ncol(datos) < 4L) stop("The CSV must contain at least four columns.")
   original_names <- names(datos)
-  if (!setequal(original_names[1:3], c("Tx", "Line", "Batch"))) {
-    stop("The first three columns must be named Tx, Line, and Batch (in any order).")
-  }
+  if (!"Tx" %in% original_names) stop("The table must include a column named Tx.")
   names(datos) <- make.names(original_names, unique = TRUE)
   datos$Tx <- as.factor(datos$Tx)
-  datos$Line <- as.factor(datos$Line)
-  datos$Batch <- as.factor(datos$Batch)
-  cols <- seq.int(4L, ncol(datos))
-  cols <- cols[nzchar(trimws(original_names[cols]))]  # skip blank headers
+  for (v in intersect(c("Line", "Batch"), names(datos))) datos[[v]] <- as.factor(datos[[v]])
+  cols <- which(!original_names %in% c("Tx", "Line", "Batch") &
+                nzchar(trimws(original_names)))  # skip blank headers
   list(datos = datos, MM_Vars = names(datos)[cols],
        parameter_labels = original_names[cols],
        numeric = vapply(datos[cols], is.numeric, logical(1)))
 }
 
+# Random effects by number of Lines/Batches, as in the script
+random_term <- function(datos) {
+  nl <- nlevels(datos$Line)
+  nb <- nlevels(datos$Batch)
+  if (nl > 1 && nb > 1) "(1|Line/Batch)"
+  else if (nl > 1) "(1|Line)"
+  else if (nb > 1) "(1|Batch)"
+  else stop("Something is wrong with the number of Lines or Batches. Please check your data.")
+}
+
 run_models <- function(prep, vars, adjust, progress = function(n, label) NULL) {
   datos <- prep$datos
+  rand <- random_term(datos)
   n <- length(vars)
   out <- vector("list", n)
   for (i in seq_len(n)) {
     var <- vars[i]
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
-    f <- reformulate(c("Tx", "(1|Line/Batch)"), var)
+    f <- reformulate(c("Tx", rand), var)
     warn <- character()
     res <- withCallingHandlers(
       tryCatch({
@@ -69,6 +76,7 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL) {
     )
     res$var <- var
     res$label <- label
+    res$rand <- rand
     res$warnings <- unique(warn)
     out[[i]] <- res
   }
@@ -93,7 +101,9 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   lev <- levels(datos$Tx)
   k <- length(lev)
   lines <- levels(datos$Line)
-  cols <- if (opt$color) hcl.colors(length(lines), "Dark 3") else rep("grey45", length(lines))
+  by_line <- opt$color && length(lines) > 0
+  cols <- if (by_line) hcl.colors(length(lines), "Dark 3") else "grey45"
+  grp <- if (by_line) as.integer(datos$Line) else 1
   means <- res$means
   pw <- res$pairs
 
@@ -132,7 +142,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
 
   # Samples
   points(xj, y, pch = 19, cex = opt$size,
-         col = adjustcolor(cols[as.integer(datos$Line)], 0.75))
+         col = adjustcolor(cols[grp], 0.75))
 
   # Model means ± 95% CI
   arrows(xe, means$lower.CL, xe, means$upper.CL,
@@ -151,7 +161,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
 
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
-  if (opt$color) {
+  if (by_line) {
     legend(lx, usr[4], legend = lines, title = "Line", col = cols, pch = 19,
            bty = "n", xpd = TRUE, cex = 0.85)
   }
@@ -168,12 +178,12 @@ ui <- page_sidebar(
   sidebar = sidebar(
     width = 320,
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
-    helpText("First three columns: Tx, Line, Batch (any order)."),
+    helpText("Needs columns named Tx, Line and Batch (exact spelling), in any position."),
     downloadLink("example", "Download an example file"),
     hr(),
     selectizeInput("params", "2. Parameters to analyze", choices = NULL,
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
-    helpText("Numeric columns from the 4th onward are preselected."),
+    helpText("Numeric columns are preselected."),
     hr(),
     radioButtons("adjust", "3. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
@@ -226,7 +236,8 @@ Each parameter is fit with a linear mixed model
 `parameter ~ Tx + (1 | Line/Batch)`
 
 using `lmerTest::lmer(REML = TRUE)`, and Tx is tested with
-`anova(type = 'II', ddf = 'Kenward-Roger')`.
+`anova(type = 'II', ddf = 'Kenward-Roger')`. With only one Line the model
+uses `(1 | Batch)`; with only one Batch, `(1 | Line)`.
 
 **Pairwise comparisons** between treatments use estimated marginal means
 from the same model (`emmeans`, Kenward-Roger df), with Tukey or Bonferroni
@@ -289,6 +300,7 @@ server <- function(input, output, session) {
     r <- results()
     labels <- vapply(r$res, `[[`, "", "label")
     cat("Parameters: ", paste(labels, collapse = ", "), "\n", sep = "")
+    cat("Model: parameter ~ Tx + ", r$res[[1]]$rand, "\n", sep = "")
     for (x in r$res) {
       cat("\n", x$label, "\n", sep = "")
       print(x$anova)
