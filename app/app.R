@@ -7,47 +7,38 @@ library(emmeans)
 
 # ---- Model (Kenward-Roger) ------------------------------
 
-# Reads and checks the CSV exactly as the script does. Returns the data with
-# formula-safe names plus the original parameter labels, or stops with the
-# script's error message.
 prepare_data <- function(path) {
   datos <- read.csv(path, header = TRUE, check.names = FALSE)
   if (ncol(datos) < 4L) stop("The CSV must contain at least four columns.")
   original_names <- names(datos)
-  parameter_columns <- seq.int(4L, ncol(datos))
-  parameter_labels <- original_names[parameter_columns]
-  if (any(!nzchar(trimws(parameter_labels)))) {
-    stop("Each parameter column (column 4 onward) must have a header.")
-  }
   if (!setequal(original_names[1:3], c("Tx", "Line", "Batch"))) {
     stop("The first three columns must be named Tx, Line, and Batch (in any order).")
   }
-  # Make headers safe for formulas while retaining original labels in output.
   names(datos) <- make.names(original_names, unique = TRUE)
   datos$Tx <- as.factor(datos$Tx)
   datos$Line <- as.factor(datos$Line)
   datos$Batch <- as.factor(datos$Batch)
-  list(datos = datos, MM_Vars = names(datos)[parameter_columns],
-       parameter_labels = parameter_labels)
+  cols <- seq.int(4L, ncol(datos))
+  cols <- cols[nzchar(trimws(original_names[cols]))]  # skip blank headers
+  list(datos = datos, MM_Vars = names(datos)[cols],
+       parameter_labels = original_names[cols],
+       numeric = vapply(datos[cols], is.numeric, logical(1)))
 }
 
-run_models <- function(prep, adjust, progress = function(n, label) NULL) {
+run_models <- function(prep, vars, adjust, progress = function(n, label) NULL) {
   datos <- prep$datos
-  n <- length(prep$MM_Vars)
+  n <- length(vars)
   out <- vector("list", n)
   for (i in seq_len(n)) {
-    var <- prep$MM_Vars[i]
-    label <- prep$parameter_labels[i]
+    var <- vars[i]
+    label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
     f <- reformulate(c("Tx", "(1|Line/Batch)"), var)
     warn <- character()
     res <- withCallingHandlers(
       tryCatch({
         MM_Form <- lmerTest::lmer(f, data = datos, REML = TRUE)
-        # Type II F tests using Kenward-Roger degrees of freedom.
         anova_result <- stats::anova(MM_Form, type = "II", ddf = "Kenward-Roger")
-
-        # Pairwise comparisons between treatments from the same model.
         em <- emmeans(MM_Form, specs = "Tx", lmer.df = "kenward-roger")
         means <- as.data.frame(summary(em))
         pw <- as.data.frame(summary(pairs(em, adjust = adjust)))
@@ -95,8 +86,6 @@ format_p <- function(p) {
   ifelse(p < 0.0001, "p < 0.0001", paste("p =", signif(p, 3)))
 }
 
-# Raw values per sample (colored by Line) with the model's estimated mean and
-# 95% CI for each treatment, and pairwise p-values as brackets.
 draw_plot <- function(datos, res, adjust) {
   y <- datos[[res$var]]
   lev <- levels(datos$Tx)
@@ -122,18 +111,18 @@ draw_plot <- function(datos, res, adjust) {
   mtext(paste("Pairwise adjustment:", adjust_label(adjust, k)),
         side = 3, line = 0.3, cex = 0.8)
 
-  # Raw data, jittered, left of each group center.
+  # Samples
   set.seed(1)
   xj <- as.integer(datos$Tx) - 0.12 + runif(length(y), -0.08, 0.08)
   points(xj, y, pch = 19, col = adjustcolor(cols[as.integer(datos$Line)], 0.8))
 
-  # Estimated marginal means with 95% CI, right of each group center.
+  # Model means ± 95% CI
   xe <- match(as.character(means$Tx), lev) + 0.15
   arrows(xe, means$lower.CL, xe, means$upper.CL,
          angle = 90, code = 3, length = 0.05, lwd = 2)
   points(xe, means$emmean, pch = 23, bg = "white", cex = 1.4, lwd = 2)
 
-  # Pairwise brackets (emmeans orders pairs like combn: 1-2, 1-3, ..., 2-3, ...).
+  # Brackets; emmeans pair order matches combn
   prs <- combn(k, 2)
   for (i in seq_len(n_pairs)) {
     a <- prs[1, i]; b <- prs[2, i]
@@ -159,15 +148,18 @@ ui <- page_sidebar(
   sidebar = sidebar(
     width = 320,
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
-    helpText("First three columns: Tx, Line, Batch (any order).",
-             "Every column from the 4th onward is analyzed as a parameter."),
+    helpText("First three columns: Tx, Line, Batch (any order)."),
     downloadLink("example", "Download an example file"),
     hr(),
-    radioButtons("adjust", "2. Pairwise p-value adjustment",
+    selectizeInput("params", "2. Parameters to analyze", choices = NULL,
+                   multiple = TRUE, options = list(plugins = list("remove_button"))),
+    helpText("Numeric columns from the 4th onward are preselected."),
+    hr(),
+    radioButtons("adjust", "3. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
     helpText("With only two treatment groups there is a single comparison,",
              "so both give the same p-value."),
-    actionButton("run", "3. Run models", class = "btn-primary")
+    actionButton("run", "4. Run models", class = "btn-primary")
   ),
   navset_card_tab(
     nav_panel("ANOVA results",
@@ -219,10 +211,18 @@ server <- function(input, output, session) {
              error = function(e) validate(conditionMessage(e)))
   })
 
+  observeEvent(prep(), {
+    p <- prep()
+    updateSelectizeInput(session, "params",
+                         choices = setNames(p$MM_Vars, p$parameter_labels),
+                         selected = p$MM_Vars[p$numeric])
+  })
+
   results <- eventReactive(input$run, {
     p <- prep()
+    validate(need(length(input$params) > 0, "Select at least one parameter."))
     res <- withProgress(message = "Fitting models", value = 0,
-      tryCatch(run_models(p, input$adjust,
+      tryCatch(run_models(p, input$params, input$adjust,
                           function(n, label) incProgress(1 / n, detail = label)),
                error = function(e) validate(conditionMessage(e))))
     list(res = res, prep = p, adjust = input$adjust,
@@ -237,7 +237,7 @@ server <- function(input, output, session) {
   anova_df <- reactive(do.call(rbind, lapply(results()$res, `[[`, "table")))
   pairs_df <- reactive(do.call(rbind, lapply(results()$res, `[[`, "pairs_table")))
 
-  # Show p-values to 3 significant figures on screen; the CSVs keep full precision.
+  # 3 sig. figs on screen; CSVs keep full precision
   show_p <- function(df) {
     for (col in intersect(c("Pr(>F)", "p.value"), names(df))) {
       df[[col]] <- as.character(signif(df[[col]], 3))
@@ -249,7 +249,8 @@ server <- function(input, output, session) {
 
   output$anova_print <- renderPrint({
     r <- results()
-    cat("Parameters: ", paste(r$prep$parameter_labels, collapse = ", "), "\n", sep = "")
+    labels <- vapply(r$res, `[[`, "", "label")
+    cat("Parameters: ", paste(labels, collapse = ", "), "\n", sep = "")
     for (x in r$res) {
       cat("\n", x$label, "\n", sep = "")
       print(x$anova)
