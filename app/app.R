@@ -86,38 +86,55 @@ format_p <- function(p) {
   ifelse(p < 0.0001, "p < 0.0001", paste("p =", signif(p, 3)))
 }
 
-draw_plot <- function(datos, res, adjust) {
+plot_defaults <- list(layout = "side", color = TRUE, size = 1, brackets = TRUE)
+
+draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   y <- datos[[res$var]]
   lev <- levels(datos$Tx)
   k <- length(lev)
   lines <- levels(datos$Line)
-  cols <- hcl.colors(length(lines), "Dark 3")
+  cols <- if (opt$color) hcl.colors(length(lines), "Dark 3") else rep("grey45", length(lines))
   means <- res$means
   pw <- res$pairs
 
   rng <- range(c(y, means$lower.CL, means$upper.CL), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
-  n_pairs <- nrow(pw)
-  top <- rng[2] + h * (0.08 + 0.1 * n_pairs)
+  n_pairs <- if (opt$brackets) nrow(pw) else 0
+  top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
-  op <- par(mar = c(4.5, 4.5, 5, 8.5))
+  # Shrink text and margins below 5 in
+  op <- par(cex = min(1, min(dev.size("in")) / 5),
+            mar = c(3, 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, k + 0.5), ylim = c(rng[1] - 0.05 * h, top),
-       xaxt = "n", xlab = "Tx", ylab = res$label, las = 1)
-  title(main = res$label, line = 2.8)
+       xaxt = "n", xlab = "", ylab = res$label, las = 1)
   axis(1, at = seq_len(k), labels = lev)
-  mtext("Tx + (1|Line/Batch), Kenward-Roger df", side = 3, line = 1.2, cex = 0.8)
-  mtext(paste("Pairwise adjustment:", adjust_label(adjust, k)),
-        side = 3, line = 0.3, cex = 0.8)
+  if (k > 2) {
+    title(main = res$label, line = 2.6)
+    mtext("Linear mixed model, Kenward-Roger", side = 3, line = 1.2, cex = 0.8 * par("cex"))
+    mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
+          side = 3, line = 0.3, cex = 0.8 * par("cex"))
+  } else {
+    title(main = res$label, line = 1.6)
+    mtext("Linear mixed model, Kenward-Roger", side = 3, line = 0.4, cex = 0.8 * par("cex"))
+  }
+
+  x <- as.integer(datos$Tx)
+  xe <- match(as.character(means$Tx), lev)
+  set.seed(1)
+  if (opt$layout == "side") {
+    xj <- x - 0.12 + runif(length(y), -0.08, 0.08)
+    xe <- xe + 0.15
+  } else {
+    xj <- x + runif(length(y), -0.15, 0.15)
+  }
 
   # Samples
-  set.seed(1)
-  xj <- as.integer(datos$Tx) - 0.12 + runif(length(y), -0.08, 0.08)
-  points(xj, y, pch = 19, col = adjustcolor(cols[as.integer(datos$Line)], 0.8))
+  points(xj, y, pch = 19, cex = opt$size,
+         col = adjustcolor(cols[as.integer(datos$Line)], 0.75))
 
   # Model means ± 95% CI
-  xe <- match(as.character(means$Tx), lev) + 0.15
   arrows(xe, means$lower.CL, xe, means$upper.CL,
          angle = 90, code = 3, length = 0.05, lwd = 2)
   points(xe, means$emmean, pch = 23, bg = "white", cex = 1.4, lwd = 2)
@@ -133,9 +150,12 @@ draw_plot <- function(datos, res, adjust) {
   }
 
   usr <- par("usr")
-  legend(usr[2] + 0.02 * diff(usr[1:2]), usr[4], legend = lines, title = "Line",
-         col = cols, pch = 19, bty = "n", xpd = TRUE, cex = 0.9)
-  legend(usr[2] + 0.02 * diff(usr[1:2]), usr[3] + 0.25 * diff(usr[3:4]),
+  lx <- usr[2] + 0.02 * diff(usr[1:2])
+  if (opt$color) {
+    legend(lx, usr[4], legend = lines, title = "Line", col = cols, pch = 19,
+           bty = "n", xpd = TRUE, cex = 0.85)
+  }
+  legend(lx, usr[3] + 0.25 * diff(usr[3:4]),
          legend = c("Sample", "Model mean\n± 95% CI"), pch = c(19, 23),
          col = c("grey40", "black"), pt.bg = "white", bty = "n", xpd = TRUE,
          cex = 0.8, y.intersp = 1.4)
@@ -171,15 +191,33 @@ ui <- page_sidebar(
       tableOutput("pairs_table"),
       downloadButton("dl_pairs", "Download pairwise (.csv)")
     ),
-    nav_panel("Plots",
-      selectInput("plot_param", "Parameter", choices = NULL),
-      plotOutput("plot", height = "480px"),
+    nav_panel("Plots", div(  # plain div: no fill layout
+      layout_columns(
+        col_widths = c(4, 4, 4),
+        div(
+          selectInput("plot_param", "Parameter", choices = NULL),
+          radioButtons("layout", "Means", inline = TRUE,
+                       choices = c("Beside dots" = "side", "Over dots" = "overlay"))
+        ),
+        div(
+          checkboxInput("color_line", "Color dots by Line", TRUE),
+          checkboxInput("brackets", "Show p-values", TRUE),
+          sliderInput("pt_size", "Dot size", min = 0.4, max = 2, value = 1, step = 0.1)
+        ),
+        div(
+          numericInput("w", "Width (in)", value = 5, min = 3, max = 12, step = 0.5),
+          checkboxInput("square", "Square", TRUE),
+          conditionalPanel("!input.square",
+            numericInput("h", "Height (in)", value = 5, min = 3, max = 12, step = 0.5))
+        )
+      ),
+      plotOutput("plot", width = "auto", height = "auto", fill = FALSE),
       div(
         downloadButton("dl_png", "PNG (this parameter)"),
         downloadButton("dl_pdf", "PDF (this parameter)"),
         downloadButton("dl_pdf_all", "PDF (all parameters)")
       )
-    ),
+    )),
     nav_panel("Data preview", tableOutput("preview")),
     nav_panel("About",
       markdown("
@@ -265,8 +303,20 @@ server <- function(input, output, session) {
     r$res[[match(input$plot_param, vapply(r$res, `[[`, "", "label"))]]
   })
 
-  output$plot <- renderPlot(draw_plot(results()$prep$datos, current(), results()$adjust),
-                            res = 110)
+  opt <- reactive(list(layout = input$layout, color = input$color_line,
+                       size = input$pt_size, brackets = input$brackets))
+
+  # Size in inches, clamped to 3-12
+  dims <- reactive({
+    fit <- function(x) if (is.numeric(x) && !is.na(x)) min(max(x, 3), 12) else 5
+    w <- fit(input$w)
+    c(w = w, h = if (isTRUE(input$square)) w else fit(input$h))
+  })
+
+  output$plot <- renderPlot(
+    draw_plot(results()$prep$datos, current(), results()$adjust, opt()),
+    width = function() dims()[["w"]] * 96, height = function() dims()[["h"]] * 96,
+    res = 96)
 
   output$preview <- renderTable(head(prep()$datos, 50))
 
@@ -287,16 +337,17 @@ server <- function(input, output, session) {
   output$dl_png <- downloadHandler(
     filename = function() plot_name("png"),
     content = function(file) {
-      plotPNG(function() draw_plot(results()$prep$datos, current(), results()$adjust),
-              filename = file, width = 2100, height = 1500, res = 300)
+      d <- dims()
+      plotPNG(function() draw_plot(results()$prep$datos, current(), results()$adjust, opt()),
+              filename = file, width = d[["w"]] * 300, height = d[["h"]] * 300, res = 300)
     }
   )
 
   output$dl_pdf <- downloadHandler(
     filename = function() plot_name("pdf"),
     content = function(file) {
-      pdf(file, width = 7, height = 5)
-      draw_plot(results()$prep$datos, current(), results()$adjust)
+      pdf(file, width = dims()[["w"]], height = dims()[["h"]])
+      draw_plot(results()$prep$datos, current(), results()$adjust, opt())
       dev.off()
     }
   )
@@ -304,8 +355,8 @@ server <- function(input, output, session) {
   output$dl_pdf_all <- downloadHandler(
     filename = function() paste0(results()$base, "_MM_KR_plots.pdf"),
     content = function(file) {
-      pdf(file, width = 7, height = 5)
-      for (x in results()$res) draw_plot(results()$prep$datos, x, results()$adjust)
+      pdf(file, width = dims()[["w"]], height = dims()[["h"]])
+      for (x in results()$res) draw_plot(results()$prep$datos, x, results()$adjust, opt())
       dev.off()
     }
   )
