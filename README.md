@@ -2,8 +2,8 @@
 
 Browser-based tool for testing treatment effects on physiology or qPCR data
 with a linear mixed model, accounting for Line and Batch variability.
-Includes pairwise comparisons and downloadable plots. No installation needed;
-data never leaves your computer.
+Includes pairwise comparisons and downloadable plots. No installation needed.
+Data is local to your platform (PC/Mac/Linux).
 
 **App:** https://enzyme5610.github.io/Mixed_Model_Correction/
 
