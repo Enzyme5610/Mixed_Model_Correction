@@ -5,7 +5,7 @@ with a linear mixed model, accounting for Line and Batch variability.
 Includes pairwise comparisons and downloadable plots. No installation needed;
 data never leaves your computer.
 
-**App:** https://enzyme5610.github.io/Mixed_Model_Correction_KR/
+**App:** https://enzyme5610.github.io/Mixed_Model_Correction/
 
 ## How to use
 
@@ -40,6 +40,11 @@ AD,L5,B1,5.02,7.44
 tested by a Type II F test using Kenward-Roger degrees of freedom. With one
 Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
 batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
+
+If all lines were run together in each batch (e.g. qPCR plates), choose
+**"All lines together in each batch"** to use the crossed model
+`parameter ~ Tx + (1 | Line) + (1 | Batch)`. Batch labels must then mean the
+same run for every line.
 
 ## Plots
 

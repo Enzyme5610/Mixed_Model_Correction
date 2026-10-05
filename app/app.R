@@ -21,11 +21,12 @@ prepare_data <- function(path) {
        numeric = vapply(datos[cols], is.numeric, logical(1)))
 }
 
-# Random effects by number of Lines/Batches, as in the script
-random_term <- function(datos) {
+# Random effects by design and number of Lines/Batches, as in the script
+random_term <- function(datos, design = "nested") {
   nl <- nlevels(datos$Line)
   nb <- nlevels(datos$Batch)
   if (nl > 1 && nb > 1) {
+    if (design == "crossed") return("(1|Line) + (1|Batch)")
     # One row per line x batch: nested can't be fit, reduces to (1|Line)
     one_each <- all(table(interaction(datos$Line, datos$Batch, drop = TRUE)) == 1)
     if (one_each) "(1|Line)" else "(1|Line/Batch)"
@@ -35,9 +36,10 @@ random_term <- function(datos) {
   else stop("Something is wrong with the number of Lines or Batches. Please check your data.")
 }
 
-run_models <- function(prep, vars, adjust, progress = function(n, label) NULL) {
+run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
+                       design = "nested") {
   datos <- prep$datos
-  rand <- random_term(datos)
+  rand <- random_term(datos, design)
   n <- length(vars)
   out <- vector("list", n)
   for (i in seq_len(n)) {
@@ -234,11 +236,17 @@ ui <- page_sidebar(
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
     helpText("Numeric columns are preselected."),
     hr(),
-    radioButtons("adjust", "3. Pairwise p-value adjustment",
+    radioButtons("design", "3. How were batches run?", choices = c(
+      "Each line on its own schedule (e.g. electrophysiology)" = "nested",
+      "All lines together in each batch (e.g. qPCR plates)" = "crossed")),
+    helpText("For the second option, a batch label must mean the same run",
+             "for every line."),
+    hr(),
+    radioButtons("adjust", "4. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
     helpText("With only two treatment groups there is a single comparison,",
              "so both give the same p-value."),
-    actionButton("run", "4. Run models", class = "btn-primary"),
+    actionButton("run", "5. Run models", class = "btn-primary"),
     div(class = "small text-muted mt-3",
         "Original script: Dr. Luis Gustavo Hernandez Carballo", br(),
         "Shiny app and visualizations: Prachetas Jai Patel")
@@ -304,6 +312,11 @@ uses `(1 | Batch)`; with only one Batch, `(1 | Line)`. With one row per
 line and batch (no replicates), the nested term can't be estimated and the
 model reduces to `(1 | Line)`.
 
+If all lines were run together in each batch (shared runs, e.g. qPCR
+plates), choose that option to use the crossed model
+`parameter ~ Tx + (1 | Line) + (1 | Batch)`, which removes run-wide shifts
+shared by all lines.
+
 **Pairwise comparisons** between treatments use estimated marginal means
 from the same model (`emmeans`, Kenward-Roger df), with Tukey or Bonferroni
 adjustment as selected before running.
@@ -351,7 +364,8 @@ server <- function(input, output, session) {
     validate(need(length(input$params) > 0, "Select at least one parameter."))
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, input$adjust,
-                          function(n, label) incProgress(1 / n, detail = label)),
+                          function(n, label) incProgress(1 / n, detail = label),
+                          design = input$design),
                error = function(e) validate(conditionMessage(e))))
     list(res = res, prep = p, adjust = input$adjust,
          base = tools::file_path_sans_ext(input$file$name))

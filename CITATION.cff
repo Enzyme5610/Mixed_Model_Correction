@@ -12,8 +12,8 @@ authors:
   - given-names: "Prachetas Jai"
     family-names: "Patel"
 license: MIT
-repository-code: "https://github.com/Enzyme5610/Mixed_Model_Correction_KR"
-url: "https://enzyme5610.github.io/Mixed_Model_Correction_KR/"
+repository-code: "https://github.com/Enzyme5610/Mixed_Model_Correction"
+url: "https://enzyme5610.github.io/Mixed_Model_Correction/"
 keywords:
   - linear mixed model
   - Kenward-Roger
