@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this tool, please cite it as below."
+type: software
+title: "Mixed Model Correction"
+abstract: >-
+  Browser-based tool for testing treatment effects on physiology or qPCR data
+  with a linear mixed model (Line and Batch as random effects, Kenward-Roger
+  F test), with pairwise comparisons and downloadable plots.
+authors:
+  - given-names: "Luis Gustavo"
+    family-names: "Hernandez Carballo"
+  - given-names: "Prachetas Jai"
+    family-names: "Patel"
+repository-code: "https://github.com/Enzyme5610/Mixed_Model_Correction_KR"
+url: "https://enzyme5610.github.io/Mixed_Model_Correction_KR/"
+keywords:
+  - linear mixed model
+  - Kenward-Roger
+  - iPSC
+  - electrophysiology
+  - qPCR
