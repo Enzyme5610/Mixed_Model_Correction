@@ -236,11 +236,10 @@ ui <- page_sidebar(
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
     helpText("Numeric columns are preselected."),
     hr(),
-    radioButtons("design", "3. How were batches run?", choices = c(
-      "Each line on its own schedule (e.g. electrophysiology)" = "nested",
-      "All lines together in each batch (e.g. qPCR plates)" = "crossed")),
-    helpText("For the second option, a batch label must mean the same run",
-             "for every line."),
+    radioButtons("design", "3. Do lines share batches?", choices = c(
+      "No, each line has its own batches" = "nested",
+      "Yes, all lines were run together in each batch" = "crossed")),
+    helpText("Example of \"Yes\": L1-L4 all on the same qPCR plate labeled B1."),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
@@ -312,8 +311,8 @@ uses `(1 | Batch)`; with only one Batch, `(1 | Line)`. With one row per
 line and batch (no replicates), the nested term can't be estimated and the
 model reduces to `(1 | Line)`.
 
-If all lines were run together in each batch (shared runs, e.g. qPCR
-plates), choose that option to use the crossed model
+If lines share batches (all lines run together in each batch, e.g. on the
+same qPCR plate), answer \"Yes\" in step 3 to use the crossed model
 `parameter ~ Tx + (1 | Line) + (1 | Batch)`, which removes run-wide shifts
 shared by all lines.
 
