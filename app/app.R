@@ -271,7 +271,7 @@ ui <- page_sidebar(
             "Values as entered" = "raw",
             "Relative to reference (linear data)" = "ratio",
             "Fold change 2^-ΔΔCt (ΔCt data)" = "fc")),
-          textInput("ylab", "Y-axis label (optional)", placeholder = "e.g. Amplitude (pA)"),
+          textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
           selectInput("ref", "Reference group", choices = NULL),
           checkboxInput("color_line", "Color dots by Line", TRUE),
           checkboxInput("brackets", "Show p-values", TRUE)
