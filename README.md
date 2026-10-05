@@ -56,6 +56,8 @@ Statistics always use the values as entered.
 If you use this tool in a publication, poster or presentation, please
 acknowledge both authors (see **Cite this repository** on GitHub).
 
+Released under the [MIT License](LICENSE).
+
 ## References
 
 - Bates D, Mächler M, Bolker B, Walker S (2015). Fitting linear mixed-effects
