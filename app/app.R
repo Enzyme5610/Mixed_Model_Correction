@@ -460,6 +460,8 @@ ui <- page_sidebar(
   ),
   navset_card_tab(
     nav_panel("ANOVA results",
+      helpText("Fold-change columns appear when the plot Y axis is set to fold change",
+               "(ΔCt data); confidence intervals are in the Pairwise tab."),
       tableOutput("anova_table"),
       actionButton("dl_anova", "Download results (.csv)", icon = icon("download"))
     ),
@@ -644,7 +646,17 @@ server <- function(input, output, session) {
 
   anova_df <- reactive({
     df <- do.call(rbind, lapply(results()$res, `[[`, "table"))
-    df$Comparison <- paste(ref_order()$ord, collapse = " vs ")
+    ro <- ref_order()
+    df$Comparison <- paste(ro$ord, collapse = " vs ")
+    # dCt data: each group's fold change vs the reference (model means)
+    if (identical(input$scale, "fc")) {
+      for (g in setdiff(ro$ord, ro$ref)) {
+        df[[paste("FC", g, "vs", ro$ref)]] <- vapply(results()$res, function(r) {
+          m <- setNames(r$means$emmean, r$means$Tx)
+          2^-(m[[g]] - m[[ro$ref]])
+        }, 0)
+      }
+    }
     df
   })
 
