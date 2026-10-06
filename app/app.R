@@ -39,7 +39,7 @@ random_term <- function(datos, design = "nested") {
 }
 
 run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
-                       design = "nested") {
+                       design = "nested", log_vars = character()) {
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
@@ -49,7 +49,10 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
     progress(n, label)
     # Lines/Batches counted where this parameter was measured
     rand <- random_term(droplevels(datos[!is.na(datos[[var]]), ]), design)
-    f <- reformulate(c("Tx", rand), var)
+    logged <- var %in% log_vars
+    if (logged && any(datos[[var]] <= 0, na.rm = TRUE))
+      stop("Log transform needs positive values: '", label, "'.", call. = FALSE)
+    f <- reformulate(c("Tx", rand), if (logged) str2lang(paste0("log10(", var, ")")) else var)
     warn <- character()
     res <- withCallingHandlers(
       tryCatch({
@@ -72,6 +75,7 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
       Parameter = label,
       Comparison = paste(levels(datos$Tx), collapse = " vs "),
       DF_method = "Kenward-Roger",
+      Transform = if (logged) "log10" else "none",
       result_table,
       row.names = NULL,
       check.names = FALSE
@@ -80,12 +84,14 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
       Parameter = label,
       res$pairs,
       DF_method = "Kenward-Roger",
+      Transform = if (logged) "log10" else "none",
       P_adjust = adjust_label(adjust, nlevels(datos$Tx)),
       check.names = FALSE
     )
     res$var <- var
     res$label <- label
     res$rand <- rand
+    res$log <- logged
     res$warnings <- unique(warn)
     out[[i]] <- res
   }
@@ -120,6 +126,7 @@ bracket_text <- function(x, y, p, opt, cex) {
 # Star key as a legend block from y
 star_key <- function(opt, x, y) {
   if (opt$labels != "stars" || !opt$brackets) return(y)
+  y <- y - strheight("M", cex = 0.75)  # gap below the key above
   g <- legend(x, y, legend = c("p ≥ 0.05", "p < 0.05", "p < 0.01", "p < 0.001", "p < 0.0001"),
               title = "Significance", title.adj = 0, pch = NA, x.intersp = 3.2,
               bty = "n", xpd = TRUE, cex = 0.75)
@@ -201,14 +208,15 @@ plot_stats <- function(datos, res, opt) {
   means <- res$means
   ref <- if (isTRUE(opt$ref %in% lev)) opt$ref else lev[1]  # plotted first
   ref_mean <- means$emmean[as.character(means$Tx) == ref]
+  lg <- isTRUE(res$log)
   # Ratios need positive values; otherwise direction can flip (e.g. negative dCt)
-  ratio_ok <- ref_mean > 0 && all(datos[[res$var]] > 0, na.rm = TRUE)
-  scale <- if (opt$scale == "ratio" && !ratio_ok) "raw" else opt$scale
-  # Display scale; stats stay on entered values
+  ratio_ok <- lg || ref_mean > 0 && all(datos[[res$var]] > 0, na.rm = TRUE)
+  scale <- if (opt$scale == "ratio" && !ratio_ok || lg && opt$scale == "fc") "raw" else opt$scale
+  # Display scale; stats stay on entered values. Log parameters stay in log10 units
   tf <- switch(scale, raw = identity,
-               ratio = function(v) v / ref_mean,
+               ratio = if (lg) function(v) v - ref_mean else function(v) v / ref_mean,
                fc = function(v) 2^-(v - ref_mean))
-  raw <- datos[[res$var]]
+  raw <- if (lg) log10(datos[[res$var]]) else datos[[res$var]]
   shift <- if (opt$adj_batch) batch_shift(datos, res)
   y <- tf(if (is.null(shift)) raw else raw - shift)  # display only
   g <- as.character(means$Tx)
@@ -225,25 +233,27 @@ plot_stats <- function(datos, res, opt) {
     lo <- pmin(tf(a), tf(b)); hi <- pmax(tf(a), tf(b))
   }
   if (opt$dir == "up") lo <- m
-  list(ref = ref, ord = tx_order(datos, opt), scale = scale, y = y,
+  list(ref = ref, ord = tx_order(datos, opt), scale = scale, y = y, log = lg,
        g = g, m = m, lo = lo, hi = hi, adjusted = !is.null(shift))
 }
 
-model_note <- function(opt, adjusted) {
-  paste0("Linear mixed model, Kenward-Roger",
+model_note <- function(opt, adjusted, lg = FALSE) {
+  paste0("Linear mixed model, Kenward-Roger", if (lg) "; log10 values",
          if (opt$adj_batch) if (adjusted) "; batch-adjusted values"
                             else "; batch adjustment not possible (no batch term)")
 }
 
 scale_note <- function(opt, scale) {
-  if (opt$scale == "ratio" && scale == "raw") {
-    mtext("Relative scale needs positive values; showing values as entered (use fold change for ΔCt)",
+  if (opt$scale != "raw" && scale == "raw") {
+    mtext(if (opt$scale == "fc") "Fold change is for ΔCt; log-transformed values shown as entered"
+          else "Relative scale needs positive values; showing values as entered (use fold change for ΔCt)",
           side = 1, line = par("mar")[1] - 1, adj = 0, cex = 0.6 * par("cex"))
   }
 }
 
 scale_label <- function(st, raw, opt) {
   if (nzchar(trimws(opt$ylab))) return(opt$ylab)  # user label wins
+  if (st$log) raw <- paste(raw, "(log scale)")
   switch(st$scale, raw = raw,
          ratio = paste("Relative to", st$ref),
          fc = bquote("Fold change vs" ~ .(st$ref) ~ (2^{-Delta*Delta*Ct})))
@@ -267,6 +277,13 @@ label_angle <- function(labels, opt) {
   slot <- (dev.size("in")[1] - 12 * par("cin")[2] * cex) / length(labels)
   if (max(nchar(labels)) * 0.75 * par("cin")[1] * cex > 0.9 * slot) 90 else 0
 }
+# Y axis in original units for log10 coordinates
+y_axis <- function(lg) {
+  if (!lg) return(axis(2, las = 1))
+  at <- axisTicks(par("usr")[3:4], log = TRUE)
+  axis(2, at = log10(at), labels = format(at, drop0trailing = TRUE, trim = TRUE), las = 1)
+}
+
 bottom_mar <- function(labels, angle) {
   if (angle == 0) 3 else 1.5 + max(nchar(labels)) * if (angle == 90) 0.65 else 0.5
 }
@@ -301,7 +318,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   ylab <- scale_label(st, res$label, opt)
   y <- st$y; m <- st$m; lo <- st$lo; hi <- st$hi
 
-  rng <- range(c(y, lo, hi, if (opt$type == "bar") 0), na.rm = TRUE)
+  rng <- range(c(y, lo, hi, if (opt$type == "bar" && !st$log) 0), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
   n_pairs <- if (opt$brackets) nrow(pw) else 0
@@ -313,17 +330,18 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
             mar = c(bottom_mar(ord, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, k + 0.5), ylim = c(rng[1] - 0.05 * h, top),
-       xaxt = "n", xlab = "", ylab = ylab, las = 1)
+       xaxt = "n", yaxt = "n", xlab = "", ylab = ylab)
+  y_axis(st$log)
   x_labels(seq_len(k), ord, ang)
-  if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
+  if (scale != "raw") abline(h = if (st$log) 0 else 1, lty = 3, col = "grey60")
   if (k > 2) {
     title(main = res$label, line = 2.6)
-    mtext(model_note(opt, st$adjusted), side = 3, line = 1.2, cex = 0.8 * par("cex"))
+    mtext(model_note(opt, st$adjusted, st$log), side = 3, line = 1.2, cex = 0.8 * par("cex"))
     mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
           side = 3, line = 0.3, cex = 0.8 * par("cex"))
   } else {
     title(main = res$label, line = 1.6)
-    mtext(model_note(opt, st$adjusted), side = 3, line = 0.4, cex = 0.8 * par("cex"))
+    mtext(model_note(opt, st$adjusted, st$log), side = 3, line = 0.4, cex = 0.8 * par("cex"))
   }
 
   set.seed(1)
@@ -332,7 +350,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   xe <- xm + if (side) 0.15 else 0
 
   if (opt$type == "bar") {
-    rect(xm - 0.3, 0, xm + 0.3, m, border = "grey30",
+    rect(xm - 0.3, if (st$log) par("usr")[3] else 0, xm + 0.3, m, border = "grey30",
          col = tint(gs$val[match(st$g, gs$lev)], 0.3))
   }
   if (opt$type == "violin") {
@@ -392,6 +410,9 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   if (opt$scale == "ratio" && any(vapply(sts, function(s) s$scale == "raw", TRUE)))
     sts <- lapply(results, function(r) plot_stats(datos, r, modifyList(opt, list(scale = "raw"))))
   ord <- sts[[1]]$ord
+  lg <- sts[[1]]$log
+  if (any(vapply(sts, `[[`, TRUE, "log") != lg))
+    stop("Log-transformed and untransformed parameters can't share one axis.", call. = FALSE)
   k <- length(ord)
   w <- 0.8 / k
   off <- (seq_len(k) - (k + 1) / 2) * w
@@ -403,7 +424,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   labels <- vapply(results, `[[`, "", "label")
 
   all_v <- unlist(lapply(sts, function(s) c(s$y, s$lo, s$hi)))
-  rng <- range(c(all_v, if (opt$type == "bar") 0), na.rm = TRUE)
+  rng <- range(c(all_v, if (opt$type == "bar" && !lg) 0), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
   n_pairs <- if (opt$brackets) nrow(results[[1]]$pairs) else 0
@@ -414,11 +435,12 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
             mar = c(bottom_mar(labels, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, n + 0.5), ylim = c(rng[1] - 0.05 * h, top), xaxt = "n",
-       xlab = "", ylab = scale_label(sts[[1]], "Value", opt), las = 1)
+       yaxt = "n", xlab = "", ylab = scale_label(sts[[1]], "Value", opt))
+  y_axis(lg)
   x_labels(seq_len(n), labels, ang)
-  if (sts[[1]]$scale != "raw") abline(h = 1, lty = 3, col = "grey60")
+  if (sts[[1]]$scale != "raw") abline(h = if (lg) 0 else 1, lty = 3, col = "grey60")
   title(main = paste(ord, collapse = " vs "), line = if (k > 2) 2.6 else 1.6)
-  mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), side = 3, line = if (k > 2) 1.2 else 0.4,
+  mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted")), lg), side = 3, line = if (k > 2) 1.2 else 0.4,
         cex = 0.8 * par("cex"))
   if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
                    side = 3, line = 0.3, cex = 0.8 * par("cex"))
@@ -430,7 +452,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
     xm <- i + off[match(st$g, ord)]
     xs <- i + off[gi]
     if (opt$type == "bar") {
-      rect(xm - w * 0.4, 0, xm + w * 0.4, st$m, border = "grey30",
+      rect(xm - w * 0.4, if (lg) par("usr")[3] else 0, xm + w * 0.4, st$m, border = "grey30",
            col = tint(cols[match(st$g, ord)], 0.3))
     }
     if (opt$type == "violin") {
@@ -560,6 +582,10 @@ ui <- page_sidebar(
     selectizeInput("params", "2. Parameters to analyze", choices = NULL,
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
     helpText("Numeric columns are preselected."),
+    selectizeInput("log_params", "Log-transform (optional)", choices = NULL,
+                   multiple = TRUE, options = list(plugins = list("remove_button"))),
+    helpText("Log10 transformation for data skewed toward high values (a few much",
+             "higher than the rest). No 0 or negative values."),
     hr(),
     radioButtons("design", "3. Did different lines share a batch?",
       choiceNames = list(
@@ -676,6 +702,8 @@ ui <- page_sidebar(
 If lines shared batches (step 3 \"Yes\"): `(1 | Line) + (1 | Batch)`.
 One Line: `(1 | Batch)`. One Batch, or no replicates per line and batch:
 `(1 | Line)`.
+Log-transformed parameters are fit on log10 values; pairwise ratios are
+10^estimate.
 
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
 The reference group sets direction only; p-values don't change.
@@ -720,13 +748,21 @@ server <- function(input, output, session) {
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
 
+  # Log choices follow the selected parameters
+  observeEvent(input$params, {
+    p <- prep()
+    sel <- intersect(input$log_params, input$params)
+    updateSelectizeInput(session, "log_params", selected = sel,
+      choices = setNames(input$params, p$parameter_labels[match(input$params, p$MM_Vars)]))
+  }, ignoreNULL = FALSE)
+
   results <- eventReactive(input$run, {
     p <- prep()
     validate(need(length(input$params) > 0, "Select at least one parameter."))
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, input$adjust,
                           function(n, label) incProgress(1 / n, detail = label),
-                          design = input$design),
+                          design = input$design, log_vars = input$log_params),
                error = function(e) validate(conditionMessage(e))))
     list(res = res, prep = p, adjust = input$adjust,
          base = tools::file_path_sans_ext(input$file$name))
@@ -803,7 +839,7 @@ server <- function(input, output, session) {
       for (g in setdiff(ro$ord, ro$ref)) {
         df[[paste("FC", g, "vs", ro$ref)]] <- vapply(results()$res, function(r) {
           m <- setNames(r$means$emmean, r$means$Tx)
-          2^-(m[[g]] - m[[ro$ref]])
+          if (r$log) NA_real_ else 2^-(m[[g]] - m[[ro$ref]])
         }, 0)
       }
     }
@@ -824,10 +860,17 @@ server <- function(input, output, session) {
     df$lower.CL <- ifelse(flip, -df$upper.CL, lo)
     df$upper.CL <- ifelse(flip, -lo, df$upper.CL)
     # dCt data: fold change of the first group vs the second (2^-estimate)
+    lg <- df$Transform == "log10"
     if (identical(input$scale, "fc")) {
-      df$Fold_change <- 2^-df$estimate
-      df$FC_lower <- 2^-df$upper.CL
-      df$FC_upper <- 2^-df$lower.CL
+      df$Fold_change <- ifelse(lg, NA, 2^-df$estimate)
+      df$FC_lower <- ifelse(lg, NA, 2^-df$upper.CL)
+      df$FC_upper <- ifelse(lg, NA, 2^-df$lower.CL)
+    }
+    # log10 data: ratio of the first group to the second (10^estimate)
+    if (any(lg)) {
+      df$Ratio <- ifelse(lg, 10^df$estimate, NA)
+      df$Ratio_lower <- ifelse(lg, 10^df$lower.CL, NA)
+      df$Ratio_upper <- ifelse(lg, 10^df$upper.CL, NA)
     }
     df
   })

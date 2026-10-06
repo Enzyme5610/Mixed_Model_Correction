@@ -41,6 +41,11 @@ tested by a Type II F test using Kenward-Roger degrees of freedom. With one
 Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
 batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
 
+**Log10 transformation** (optional, per parameter) for data skewed toward
+high values (a few much higher than the rest). No 0 or negative values.
+Fit on log10 values, plotted on a log axis; groups are compared as ratios
+(10^estimate).
+
 If lines share batches (multiple lines run per batch, e.g. on the
 same qPCR plate), answer **"Yes"** to **"Did different lines share a batch?"** to use
 the crossed model
@@ -112,6 +117,18 @@ by loading.io (MIT License, © 2017 loading.io).
 - Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
   using real-time quantitative PCR and the 2^-ΔΔCT method. *Methods*
   25(4):402–408.
+
+### Log transformation
+
+- Bland JM, Altman DG (1996). Statistics notes: Transforming data. *BMJ*
+  312(7033):770.
+- Keene ON (1995). The log transformation is special. *Statistics in
+  Medicine* 14(8):811–819.
+- Limpert E, Stahel WA, Abbt M (2001). Log-normal distributions across the
+  sciences: keys and clues. *BioScience* 51(5):341–352.
+- Buzsáki G, Mizuseki K (2014). The log-dynamic brain: how skewed
+  distributions affect network operations. *Nature Reviews Neuroscience*
+  15(4):264–278.
 
 ### Batch adjustment (plots)
 
