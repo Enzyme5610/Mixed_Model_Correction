@@ -41,8 +41,8 @@ tested by a Type II F test using Kenward-Roger degrees of freedom. With one
 Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
 batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
 
-**FDR q-values** (Benjamini-Hochberg) adjust Tx p-values across the
-parameters in a run. Use for panels of similar outcomes (e.g. many genes).
+**FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
+(e.g. gene panels). Adjusts Tx p-values across all parameters in a run.
 
 **Log10 transformation** (optional, per parameter) for data skewed toward
 high values (a few much higher than the rest). No 0 or negative values.

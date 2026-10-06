@@ -705,8 +705,9 @@ One Line: `(1 | Batch)`. One Batch, or no replicates per line and batch:
 Log-transformed parameters are fit on log10 values; pairwise ratios are
 10^estimate.
 
-**FDR.** q-values (Benjamini-Hochberg) adjust Tx p-values across the
-parameters in a run.
+**FDR.** q-values (Benjamini-Hochberg) for panels of many similar
+parameters (e.g. gene panels). Adjusts Tx p-values across all parameters in
+a run.
 
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
 The reference group sets direction only; p-values don't change.
