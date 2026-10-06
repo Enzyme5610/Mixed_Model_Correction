@@ -379,9 +379,13 @@ ui <- page_sidebar(
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
     helpText("Numeric columns are preselected."),
     hr(),
-    radioButtons("design", "3. Do lines share batches?", choices = c(
-      "No, each line has its own batches" = "nested",
-      "Yes, all lines were run together in each batch" = "crossed")),
+    radioButtons("design", "3. Do lines share batches?",
+      choiceNames = list(
+        tagList("No, each line has its own batches", br(),
+                tags$small(class = "text-muted font-monospace", "(1|Line/Batch)")),
+        tagList("Yes, all lines were run together in each batch", br(),
+                tags$small(class = "text-muted font-monospace", "(1|Line) + (1|Batch)"))),
+      choiceValues = c("nested", "crossed")),
     helpText("Example of \"Yes\": L1-L4 all on the same qPCR plate labeled B1."),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",
