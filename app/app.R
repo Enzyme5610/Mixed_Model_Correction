@@ -705,6 +705,9 @@ One Line: `(1 | Batch)`. One Batch, or no replicates per line and batch:
 Log-transformed parameters are fit on log10 values; pairwise ratios are
 10^estimate.
 
+**FDR.** q-values (Benjamini-Hochberg) adjust Tx p-values across the
+parameters in a run.
+
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
 The reference group sets direction only; p-values don't change.
 
@@ -834,6 +837,9 @@ server <- function(input, output, session) {
     df <- do.call(rbind, lapply(results()$res, `[[`, "table"))
     ro <- ref_order()
     df$Comparison <- paste(ro$ord, collapse = " vs ")
+    # Benjamini-Hochberg across parameters in this run
+    i <- match("Pr(>F)", names(df))
+    df <- cbind(df[seq_len(i)], q_FDR = p.adjust(df[[i]], "BH"), df[-seq_len(i)])
     # dCt data: each group's fold change vs the reference (model means)
     if (identical(input$scale, "fc")) {
       for (g in setdiff(ro$ord, ro$ref)) {
@@ -877,7 +883,7 @@ server <- function(input, output, session) {
 
   # 3 sig. figs on screen; CSVs keep full precision
   show_p <- function(df) {
-    for (col in intersect(c("Pr(>F)", "p.value"), names(df))) {
+    for (col in intersect(c("Pr(>F)", "q_FDR", "p.value"), names(df))) {
       df[[col]] <- as.character(signif(df[[col]], 3))
     }
     df

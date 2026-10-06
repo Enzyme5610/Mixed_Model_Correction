@@ -41,6 +41,9 @@ tested by a Type II F test using Kenward-Roger degrees of freedom. With one
 Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
 batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
 
+**FDR q-values** (Benjamini-Hochberg) adjust Tx p-values across the
+parameters in a run. Use for panels of similar outcomes (e.g. many genes).
+
 **Log10 transformation** (optional, per parameter) for data skewed toward
 high values (a few much higher than the rest). No 0 or negative values.
 Fit on log10 values, plotted on a log axis; groups are compared as ratios
@@ -112,6 +115,9 @@ by loading.io (MIT License, © 2017 loading.io).
   (1994). Chapman & Hall.
 - Kramer CY (1956). Extension of multiple range tests to group means with
   unequal numbers of replications. *Biometrics* 12(3):307–310.
+- Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a
+  practical and powerful approach to multiple testing. *Journal of the Royal
+  Statistical Society: Series B* 57(1):289–300.
 - Dunn OJ (1961). Multiple comparisons among means. *Journal of the American
   Statistical Association* 56(293):52–64.
 - Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
