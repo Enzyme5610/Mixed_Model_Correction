@@ -542,6 +542,11 @@ ui <- page_sidebar(
         picks[el.dataset.input][el.dataset.key] = el.value;
         Shiny.setInputValue(el.dataset.input, picks[el.dataset.input]);
       });
+      // External links open in a new tab
+      document.addEventListener('click', e => {
+        const a = e.target.closest('a[href^=http]');
+        if (a) { a.target = '_blank'; a.rel = 'noopener'; }
+      });
       // Plot download menu
       document.addEventListener('click', e => {
         const a = e.target.closest('.mmc-dl'); if (!a) return;
