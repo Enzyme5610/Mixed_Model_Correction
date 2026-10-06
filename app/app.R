@@ -109,11 +109,23 @@ sig_label <- function(p, opt) {
   as.character(cut(p, c(-Inf, 1e-4, 1e-3, 0.01, 0.05, Inf),
                    c("****", "***", "**", "*", "ns"), right = FALSE))
 }
-star_key <- function(opt) {
-  if (opt$labels == "stars" && opt$brackets) {
-    mtext("ns p ≥ 0.05   * p < 0.05   ** p < 0.01   *** p < 0.001   **** p < 0.0001",
-          side = 1, line = par("mar")[1] - 1, adj = 1, cex = 0.6 * par("cex"))
-  }
+# Bracket label; asterisks sit high in the line, so lower them to match "ns"
+bracket_text <- function(x, y, p, opt, cex) {
+  lab <- sig_label(p, opt)
+  star <- opt$labels == "stars" && lab != "ns"
+  text(x, y - if (star) 0.35 * strheight("*", cex = cex * 1.3) else 0, lab,
+       pos = 3, offset = 0.2, cex = if (star) cex * 1.3 else cex)
+}
+
+# Star key as a legend block from y
+star_key <- function(opt, x, y) {
+  if (opt$labels != "stars" || !opt$brackets) return(y)
+  g <- legend(x, y, legend = c("p ≥ 0.05", "p < 0.05", "p < 0.01", "p < 0.001", "p < 0.0001"),
+              title = "Significance", title.adj = 0, pch = NA, x.intersp = 3.2,
+              bty = "n", xpd = TRUE, cex = 0.75)
+  text(g$rect$left + 0.1 * g$rect$w, g$text$y, c("ns", "*", "**", "***", "****"),
+       adj = c(0, 0.5), xpd = TRUE, cex = 0.75)
+  g$rect$top - g$rect$h
 }
 
 # Group order: user's order if valid, else reference first then CSV order
@@ -159,8 +171,8 @@ dot_legend <- function(x, y, cs, ss) {
     if (!is.null(cs)) list(s = cs, col = cs$val, pch = if (same) ss$val else 19),
     if (!is.null(ss) && !same) list(s = ss, col = "grey30", pch = ss$val))
   for (k in Filter(Negate(is.null), keys)) {
-    g <- legend(x, y, legend = k$s$lev, title = k$s$title, col = k$col, pch = k$pch,
-                bty = "n", xpd = TRUE, cex = 0.85)
+    g <- legend(x, y, legend = k$s$lev, title = k$s$title, title.adj = 0, col = k$col,
+                pch = k$pch, bty = "n", xpd = TRUE, cex = 0.85)
     y <- g$rect$top - g$rect$h
   }
   y
@@ -168,9 +180,9 @@ dot_legend <- function(x, y, cs, ss) {
 
 plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "line",
                       shape_by = "none", cols = list(), shapes = list(), order = NULL,
-                      labels = "p",
+                      labels = "stars",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
-                      err = "ci", dir = "both", caps = TRUE, center = "diamond",
+                      err = "sem", dir = "up", caps = TRUE, center = "diamond",
                       rot = "auto", adj_batch = FALSE)
 
 # Each row's estimated batch shift from the model (0 if no batch term)
@@ -248,8 +260,12 @@ draw_err <- function(xe, st, opt, half = 0.15) {
 }
 
 # X labels at 0, 45 or 90 degrees; "auto" picks 90 when crowded
-label_angle <- function(labels, opt, crowded = FALSE) {
-  if (opt$rot == "auto") if (crowded) 90 else 0 else as.numeric(opt$rot)
+label_angle <- function(labels, opt) {
+  if (opt$rot != "auto") return(as.numeric(opt$rot))
+  # Estimated label width vs space per label (inches); R drops overlapping labels
+  cex <- min(1, min(dev.size("in")) / 5)
+  slot <- (dev.size("in")[1] - 12 * par("cin")[2] * cex) / length(labels)
+  if (max(nchar(labels)) * 0.75 * par("cin")[1] * cex > 0.9 * slot) 90 else 0
 }
 bottom_mar <- function(labels, angle) {
   if (angle == 0) 3 else 1.5 + max(nchar(labels)) * if (angle == 90) 0.65 else 0.5
@@ -293,7 +309,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
 
   # Shrink text and margins below 5 in
   ang <- label_angle(ord, opt)
-  op <- par(cex = min(1, min(dev.size("in")) / 5),
+  op <- par(cex = min(1, min(dev.size("in")) / 5), tcl = -0.25, mgp = c(3, 0.6, 0),
             mar = c(bottom_mar(ord, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, k + 0.5), ylim = c(rng[1] - 0.05 * h, top),
@@ -348,23 +364,23 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     yb <- rng[2] + h * (0.06 + 0.1 * (i - 1))
     tick <- h * 0.02
     segments(c(a, a, b), c(yb - tick, yb, yb), c(a, b, b), c(yb, yb, yb - tick))
-    text((a + b) / 2, yb, sig_label(pw$p.value[i], opt), pos = 3, cex = 0.8, offset = 0.2)
+    bracket_text((a + b) / 2, yb, pw$p.value[i], opt, 0.8)
   }
-  star_key(opt)
   scale_note(opt, scale)
 
+  # Right-hand column: dots, then mean/error key, then stars
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
-  ky <- usr[3] + 0.3 * diff(usr[3:4])
-  if (show_dots) ky <- min(ky, dot_legend(lx, usr[4], cs, ss))
+  ky <- if (show_dots) dot_legend(lx, usr[4], cs, ss) else usr[4]
   key <- data.frame(lab = err_label(opt), pch = if (opt$type == "bar") 22 else if (line_mark) NA else 23,
                     bg = if (opt$type == "bar") "grey88" else "white", col = "black",
                     lty = if (line_mark) 1 else NA)
   if (opt$type == "violin") key <- rbind(data.frame(lab = "Distribution", pch = 22, bg = "grey92", col = "grey45", lty = NA), key)
   if (show_dots) key <- rbind(data.frame(lab = "Sample", pch = 19, bg = NA, col = "grey40", lty = NA), key)
-  legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty,
-         lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
-         cex = 0.8, y.intersp = 1.4)
+  g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty,
+              lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
+              cex = 0.8, y.intersp = 1.4)
+  star_key(opt, lx, g$rect$top - g$rect$h)
 }
 
 # All parameters in one figure: parameters on x, groups side by side
@@ -393,8 +409,8 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   n_pairs <- if (opt$brackets) nrow(results[[1]]$pairs) else 0
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
-  ang <- label_angle(labels, opt, crowded = n > 4 || max(nchar(labels)) > 10)
-  op <- par(cex = min(1, min(dev.size("in")) / 5),
+  ang <- label_angle(labels, opt)
+  op <- par(cex = min(1, min(dev.size("in")) / 5), tcl = -0.25, mgp = c(3, 0.6, 0),
             mar = c(bottom_mar(labels, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, n + 0.5), ylim = c(rng[1] - 0.05 * h, top), xaxt = "n",
@@ -444,23 +460,23 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
       yb <- rng[2] + h * (0.04 + 0.08 * (p - 1))
       segments(c(xa[1], xa[1], xa[2]), c(yb - h * 0.015, yb, yb),
                c(xa[1], xa[2], xa[2]), c(yb, yb, yb - h * 0.015))
-      text(mean(xa), yb, sig_label(pw$p.value[p], opt), pos = 3, cex = 0.65, offset = 0.15)
+      bracket_text(mean(xa), yb, pw$p.value[p], opt, 0.65)
     }
   }
-  star_key(opt)
   scale_note(opt, sts[[1]]$scale)
 
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
-  g <- legend(lx, usr[4], legend = ord, title = "Group", pch = 22, pt.cex = 1.6,
+  g <- legend(lx, usr[4], legend = ord, title = "Group", title.adj = 0, pch = 22, pt.cex = 1.6,
               pt.bg = tint(cols, 0.5), col = cols, bty = "n", xpd = TRUE, cex = 0.85)
-  ky <- usr[3] + 0.2 * diff(usr[3:4])
-  if (show_dots) ky <- min(ky, dot_legend(lx, g$rect$top - g$rect$h, cs, ss))
+  ky <- g$rect$top - g$rect$h
+  if (show_dots) ky <- dot_legend(lx, ky, cs, ss)
   line_mark <- opt$type != "bar" && opt$center == "line"
-  legend(lx, ky, legend = err_label(opt),
-         pch = if (opt$type == "bar") NA else if (line_mark) NA else 23,
-         lty = if (line_mark || opt$type == "bar") 1 else NA, lwd = 2, pt.bg = "white",
-         bty = "n", xpd = TRUE, cex = 0.8)
+  g <- legend(lx, ky, legend = err_label(opt),
+              pch = if (opt$type == "bar") NA else if (line_mark) NA else 23,
+              lty = if (line_mark || opt$type == "bar") 1 else NA, lwd = 2, pt.bg = "white",
+              bty = "n", xpd = TRUE, cex = 0.8)
+  star_key(opt, lx, g$rect$top - g$rect$h)
 }
 
 # Plot download formats (raster at 300 dpi)
@@ -474,7 +490,7 @@ plot_formats <- list(
   svg  = list(label = "SVG", ext = "svg", type = "image/svg+xml", open = svg),
   # Plain EMF (no EMF+) so PowerPoint can ungroup it into shapes
   emf  = list(label = "EMF", ext = "emf", type = "image/emf",
-              open = function(f, w, h) devEMF::emf(f, w, h, emfPlus = FALSE)),
+              open = function(f, w, h) devEMF::emf(f, w, h, emfPlus = FALSE, family = "Aptos")),
   pdf_all = list(type = "application/pdf", open = pdf))
 
 dl_item <- function(f, label) {
@@ -615,11 +631,11 @@ ui <- page_sidebar(
           uiOutput("dot_style_ui"),
           sliderInput("pt_size", "Dot size", min = 0.4, max = 2, value = 1, step = 0.1)),
         accordion_panel("4. Mean & error bars",
-          selectInput("err", "Error bars", choices = c(
+          selectInput("err", "Error bars", selected = "sem", choices = c(
             "95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd")),
           conditionalPanel("input.err == 'sem' || input.err == 'sd'",
             helpText("SEM and SD use the raw values and ignore Line and Batch.")),
-          radioButtons("dir", NULL, inline = TRUE,
+          radioButtons("dir", NULL, inline = TRUE, selected = "up",
                        choices = c("Both directions" = "both", "Above only" = "up")),
           checkboxInput("caps", "Caps", TRUE),
           conditionalPanel("input.type != 'bar'",
@@ -634,7 +650,7 @@ ui <- page_sidebar(
           textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
           selectInput("rot", "X label angle", choices = c(
             "Auto" = "auto", "Horizontal" = "0", "45°" = "45", "Vertical" = "90")),
-          radioButtons("sig", "Significance", inline = TRUE,
+          radioButtons("sig", "Significance", inline = TRUE, selected = "stars",
                        choices = c("p-values" = "p", "Stars" = "stars", "Hide" = "none"))),
         accordion_panel("6. Figure size",
           numericInput("w", "Width (in)", value = 5, min = 3, max = 12, step = 0.5),
