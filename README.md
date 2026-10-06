@@ -55,6 +55,10 @@ adjustable). The Y axis can show values as entered, relative to a reference grou
 data, e.g. physiology), or as fold change 2^-ΔΔCt (ΔCt data, qPCR).
 Statistics always use the values as entered.
 
+A reference (control) group sets the comparison direction in tables and plots.
+Significance can be shown as p-values or stars (ns, *, **, ***, ****), and
+dots can be colored by Line or Batch.
+
 **All parameters in one figure** shows the selected parameters side by side on
 one shared Y axis, with the groups next to each other for each parameter.
 

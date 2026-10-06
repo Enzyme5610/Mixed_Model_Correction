@@ -101,7 +101,29 @@ format_p <- function(p) {
   ifelse(p < 0.0001, "p < 0.0001", paste("p =", signif(p, 3)))
 }
 
-plot_defaults <- list(type = "dots", layout = "side", dots = TRUE, color = TRUE,
+# Bracket label: p-value or GraphPad Prism-style stars
+sig_label <- function(p, opt) {
+  if (opt$labels != "stars") return(format_p(p))
+  as.character(cut(p, c(-Inf, 1e-4, 1e-3, 0.01, 0.05, Inf),
+                   c("****", "***", "**", "*", "ns"), right = FALSE))
+}
+star_key <- function(opt) {
+  if (opt$labels == "stars" && opt$brackets) {
+    mtext("ns p ≥ 0.05   * p < 0.05   ** p < 0.01   *** p < 0.001   **** p < 0.0001",
+          side = 1, line = par("mar")[1] - 1, adj = 1, cex = 0.6 * par("cex"))
+  }
+}
+
+# Dot colors by Line, Batch or none
+dot_colors <- function(datos, opt) {
+  f <- switch(opt$color_by, line = datos$Line, batch = datos$Batch, NULL)
+  if (is.null(f) || nlevels(f) == 0) return(NULL)
+  list(lev = levels(f), cols = hcl.colors(nlevels(f), "Dark 3"), idx = as.integer(f),
+       title = if (opt$color_by == "line") "Line" else "Batch")
+}
+
+plot_defaults <- list(type = "dots", layout = "side", dots = TRUE, color_by = "line",
+                      labels = "p",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
                       err = "ci", dir = "both", caps = TRUE, center = "diamond",
                       rot = "auto")
@@ -177,10 +199,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
   lev <- levels(datos$Tx)
   k <- length(lev)
-  lines <- levels(datos$Line)
-  by_line <- opt$color && length(lines) > 0
-  cols <- if (by_line) hcl.colors(length(lines), "Dark 3") else "grey45"
-  grp <- if (by_line) as.integer(datos$Line) else 1
+  dc <- dot_colors(datos, opt)
   pw <- res$pairs
 
   st <- plot_stats(datos, res, opt)
@@ -238,7 +257,8 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   # Samples
   show_dots <- opt$type == "dots" || opt$dots
   if (show_dots) {
-    points(xj, y, pch = 19, cex = opt$size, col = adjustcolor(cols[grp], 0.75))
+    col <- if (is.null(dc)) "grey45" else dc$cols[dc$idx]
+    points(xj, y, pch = 19, cex = opt$size, col = adjustcolor(col, 0.75))
   }
 
   draw_err(xe, st, opt)
@@ -251,13 +271,14 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     yb <- rng[2] + h * (0.06 + 0.1 * (i - 1))
     tick <- h * 0.02
     segments(c(a, a, b), c(yb - tick, yb, yb), c(a, b, b), c(yb, yb, yb - tick))
-    text((a + b) / 2, yb, format_p(pw$p.value[i]), pos = 3, cex = 0.8, offset = 0.2)
+    text((a + b) / 2, yb, sig_label(pw$p.value[i], opt), pos = 3, cex = 0.8, offset = 0.2)
   }
+  star_key(opt)
 
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
-  if (by_line && show_dots) {
-    legend(lx, usr[4], legend = lines, title = "Line", col = cols, pch = 19,
+  if (!is.null(dc) && show_dots) {
+    legend(lx, usr[4], legend = dc$lev, title = dc$title, col = dc$cols, pch = 19,
            bty = "n", xpd = TRUE, cex = 0.85)
   }
   key <- data.frame(lab = err_label(opt), pch = if (opt$type == "bar") 22 else if (line_mark) NA else 23,
@@ -281,6 +302,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   off <- (seq_len(k) - (k + 1) / 2) * w
   cols <- c("grey40", hcl.colors(max(k - 1, 1), "Dark 3"))[seq_len(k)]
   gi <- match(as.character(datos$Tx), ord)
+  dc <- dot_colors(datos, opt)
   labels <- vapply(results, `[[`, "", "label")
 
   all_v <- unlist(lapply(sts, function(s) c(s$y, s$lo, s$hi)))
@@ -326,28 +348,33 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
       }
     }
     if (show_dots) {
+      col <- if (is.null(dc)) cols[gi] else dc$cols[dc$idx]
       points(xs + runif(length(xs), -w * 0.25, w * 0.25), st$y, pch = 19,
-             cex = opt$size, col = adjustcolor(cols[gi], 0.75))
+             cex = opt$size, col = adjustcolor(col, 0.75))
     }
     draw_err(xm, st, opt, half = w * 0.3)
 
-    # Brackets per parameter; emmeans pair order matches combn on model levels
+    # Brackets at one shared height; emmeans pair order matches combn on model levels
     pw <- results[[i]]$pairs
     prs <- combn(levels(datos$Tx), 2)
-    base <- max(c(st$y, st$hi), na.rm = TRUE)
     for (p in seq_len(n_pairs)) {
       xa <- sort(i + off[match(prs[, p], ord)])
-      yb <- base + h * (0.04 + 0.08 * (p - 1))
+      yb <- rng[2] + h * (0.04 + 0.08 * (p - 1))
       segments(c(xa[1], xa[1], xa[2]), c(yb - h * 0.015, yb, yb),
                c(xa[1], xa[2], xa[2]), c(yb, yb, yb - h * 0.015))
-      text(mean(xa), yb, format_p(pw$p.value[p]), pos = 3, cex = 0.65, offset = 0.15)
+      text(mean(xa), yb, sig_label(pw$p.value[p], opt), pos = 3, cex = 0.65, offset = 0.15)
     }
   }
+  star_key(opt)
 
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
-  legend(lx, usr[4], legend = ord, title = "Group", pch = 22, pt.cex = 1.6,
-         pt.bg = adjustcolor(cols, 0.5), col = cols, bty = "n", xpd = TRUE, cex = 0.85)
+  g <- legend(lx, usr[4], legend = ord, title = "Group", pch = 22, pt.cex = 1.6,
+              pt.bg = adjustcolor(cols, 0.5), col = cols, bty = "n", xpd = TRUE, cex = 0.85)
+  if (!is.null(dc) && show_dots) {
+    legend(lx, g$rect$top - g$rect$h, legend = dc$lev, title = dc$title, col = dc$cols,
+           pch = 19, bty = "n", xpd = TRUE, cex = 0.85)
+  }
   line_mark <- opt$type != "bar" && opt$center == "line"
   legend(lx, usr[3] + 0.2 * diff(usr[3:4]), legend = err_label(opt),
          pch = if (opt$type == "bar") NA else if (line_mark) NA else 23,
@@ -392,6 +419,8 @@ ui <- page_sidebar(
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
     helpText("With only two treatment groups there is a single comparison,",
              "so both give the same p-value."),
+    selectInput("ref", "Reference (control) group", choices = NULL),
+    helpText("Sets comparison direction in tables and plots; p-values don't change."),
     actionButton("run", "5. Run models", class = "btn-primary"),
     div(class = "small text-muted mt-3",
         "Original script: Dr. Luis Gustavo Hernandez Carballo", br(),
@@ -442,11 +471,13 @@ ui <- page_sidebar(
             "Relative to reference (linear data)" = "ratio",
             "Fold change 2^-ΔΔCt (ΔCt data)" = "fc")),
           textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
-          selectInput("ref", "Reference group", choices = NULL),
           selectInput("rot", "Label angle", choices = c(
             "Auto" = "auto", "Horizontal" = "0", "45°" = "45", "Vertical" = "90")),
-          checkboxInput("color_line", "Color dots by Line", TRUE),
-          checkboxInput("brackets", "Show p-values", TRUE)
+          selectInput("color_by", "Color dots by", choices = c(
+            "Line" = "line", "Batch" = "batch", "None" = "none")),
+          checkboxInput("brackets", "Show significance", TRUE),
+          radioButtons("labels", NULL, inline = TRUE,
+                       choices = c("p-values" = "p", "Stars (*, ns)" = "stars"))
         ),
         div(
           sliderInput("pt_size", "Dot size", min = 0.4, max = 2, value = 1, step = 0.1),
@@ -495,6 +526,10 @@ entered.
 **Error bars** can show the model's 95% CI or SE (matching the statistics),
 or the SEM or SD of the raw values (which ignore Line and Batch).
 
+The **reference (control) group** sets the comparison direction in tables and
+plots (e.g. \"AD - Control\"); p-values are unaffected. Significance can be
+shown as p-values or GraphPad Prism-style stars (ns, *, **, ***, ****).
+
 **All parameters in one figure** places the selected parameters side by side
 on one shared Y axis, with the groups next to each other for each parameter.
 Relative or fold-change Y axes work best when parameters have different units.
@@ -532,6 +567,9 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "params",
                          choices = setNames(p$MM_Vars, p$parameter_labels),
                          selected = p$MM_Vars[p$numeric])
+    lev <- levels(p$datos$Tx)
+    ctrl <- grep("^(control|ctrl|gfp)", lev, ignore.case = TRUE, value = TRUE)
+    updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
 
   results <- eventReactive(input$run, {
@@ -550,13 +588,33 @@ server <- function(input, output, session) {
     labels <- vapply(results()$res, `[[`, "", "label")
     updateSelectInput(session, "plot_param", choices = labels)
     updateSelectizeInput(session, "multi", choices = labels, selected = labels)
-    lev <- levels(results()$prep$datos$Tx)
-    ctrl <- grep("^(control|ctrl|gfp)", lev, ignore.case = TRUE, value = TRUE)
-    updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
 
-  anova_df <- reactive(do.call(rbind, lapply(results()$res, `[[`, "table")))
-  pairs_df <- reactive(do.call(rbind, lapply(results()$res, `[[`, "pairs_table")))
+  # Tables follow the reference group: "Ref vs others", pairs as "other - Ref"
+  ref_order <- reactive({
+    lev <- levels(results()$prep$datos$Tx)
+    ref <- if (isTRUE(input$ref %in% lev)) input$ref else lev[1]
+    list(lev = lev, ref = ref, ord = c(ref, setdiff(lev, ref)))
+  })
+
+  anova_df <- reactive({
+    df <- do.call(rbind, lapply(results()$res, `[[`, "table"))
+    df$Comparison <- paste(ref_order()$ord, collapse = " vs ")
+    df
+  })
+
+  pairs_df <- reactive({
+    df <- do.call(rbind, lapply(results()$res, `[[`, "pairs_table"))
+    ro <- ref_order()
+    prs <- combn(ro$lev, 2)  # emmeans pair order
+    i <- rep(seq_len(ncol(prs)), length.out = nrow(df))
+    flip <- prs[1, i] == ro$ref
+    a <- ifelse(flip, prs[2, i], prs[1, i]); b <- ifelse(flip, prs[1, i], prs[2, i])
+    df$contrast <- paste(a, "-", b)
+    df$estimate <- ifelse(flip, -df$estimate, df$estimate)
+    df$t.ratio <- ifelse(flip, -df$t.ratio, df$t.ratio)
+    df
+  })
 
   # 3 sig. figs on screen; CSVs keep full precision
   show_p <- function(df) {
@@ -588,7 +646,7 @@ server <- function(input, output, session) {
   })
 
   opt <- reactive(list(type = input$type, layout = input$layout, dots = input$dots,
-                       color = input$color_line, size = input$pt_size,
+                       color_by = input$color_by, labels = input$labels, size = input$pt_size,
                        brackets = input$brackets, scale = input$scale, ref = input$ref,
                        ylab = input$ylab, err = input$err, dir = input$dir,
                        caps = input$caps, center = input$center, rot = input$rot))
