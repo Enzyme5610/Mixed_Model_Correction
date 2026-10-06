@@ -41,13 +41,14 @@ random_term <- function(datos, design = "nested") {
 run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
                        design = "nested") {
   datos <- prep$datos
-  rand <- random_term(datos, design)
   n <- length(vars)
   out <- vector("list", n)
   for (i in seq_len(n)) {
     var <- vars[i]
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
+    # Lines/Batches counted where this parameter was measured
+    rand <- random_term(droplevels(datos[!is.na(datos[[var]]), ]), design)
     f <- reformulate(c("Tx", rand), var)
     warn <- character()
     res <- withCallingHandlers(
@@ -165,7 +166,7 @@ dot_legend <- function(x, y, cs, ss) {
   y
 }
 
-plot_defaults <- list(type = "dots", layout = "side", dots = TRUE, color_by = "line",
+plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "line",
                       shape_by = "none", cols = list(), shapes = list(), order = NULL,
                       labels = "p",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
@@ -544,14 +545,15 @@ ui <- page_sidebar(
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
     helpText("Numeric columns are preselected."),
     hr(),
-    radioButtons("design", "3. Do lines share batches?",
+    radioButtons("design", "3. Did different lines share a batch?",
       choiceNames = list(
-        tagList("No, each batch has one line", br(),
+        tagList("No, each line had its own batches", br(),
+                tags$small(class = "text-muted", "e.g. L1_B1, L1_B2, L2_B1"), br(),
                 tags$small(class = "text-muted font-monospace", "(1|Line/Batch)")),
-        tagList("Yes, multiple lines were run per batch", br(),
+        tagList("Yes, lines were run side by side", br(),
+                tags$small(class = "text-muted", "e.g. L1 and L3 both in B1"), br(),
                 tags$small(class = "text-muted font-monospace", "(1|Line) + (1|Batch)"))),
       choiceValues = c("nested", "crossed")),
-    helpText("Example of \"Yes\": L1-L4 all on the same qPCR plate labeled B1."),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
@@ -590,7 +592,7 @@ ui <- page_sidebar(
           conditionalPanel("input.fig == 'all'",
             selectizeInput("multi", "Parameters", choices = NULL, multiple = TRUE,
                            options = list(plugins = list("remove_button")))),
-          radioButtons("type", "Plot type", inline = TRUE,
+          radioButtons("type", "Plot type", inline = TRUE, selected = "bar",
                        choices = c("Dots" = "dots", "Bar" = "bar", "Violin" = "violin")),
           conditionalPanel("input.type == 'dots'",
             radioButtons("layout", "Mean and error bar", inline = TRUE,
@@ -655,7 +657,7 @@ ui <- page_sidebar(
       markdown("
 **Model.** Each parameter: `parameter ~ Tx + (1 | Line/Batch)`, fit with
 `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
-If lines share batches (step 3 \"Yes\"): `(1 | Line) + (1 | Batch)`.
+If lines shared batches (step 3 \"Yes\"): `(1 | Line) + (1 | Batch)`.
 One Line: `(1 | Batch)`. One Batch, or no replicates per line and batch:
 `(1 | Line)`.
 
@@ -828,9 +830,8 @@ server <- function(input, output, session) {
     r <- results()
     labels <- vapply(r$res, `[[`, "", "label")
     cat("Parameters: ", paste(labels, collapse = ", "), "\n", sep = "")
-    cat("Model: parameter ~ Tx + ", r$res[[1]]$rand, "\n", sep = "")
     for (x in r$res) {
-      cat("\n", x$label, "\n", sep = "")
+      cat("\n", x$label, " ~ Tx + ", x$rand, "\n", sep = "")
       print(x$anova)
       if (length(x$warnings)) cat("Warning:", x$warnings, sep = "\n  ")
       cat("\n")

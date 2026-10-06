@@ -42,7 +42,7 @@ Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
 batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
 
 If lines share batches (multiple lines run per batch, e.g. on the
-same qPCR plate), answer **"Yes"** to **"Do lines share batches?"** to use
+same qPCR plate), answer **"Yes"** to **"Did different lines share a batch?"** to use
 the crossed model
 `parameter ~ Tx + (1 | Line) + (1 | Batch)`. Batch labels must then mean the
 same run for every line.
