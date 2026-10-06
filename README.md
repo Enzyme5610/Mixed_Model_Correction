@@ -68,8 +68,41 @@ acknowledge both authors (see **Cite this repository** on GitHub).
 
 Released under the [MIT License](LICENSE).
 
+## Acknowledgments
+
+Loading screen animation: [loading-bar](https://github.com/loadingio/loading-bar)
+by loading.io (MIT License, © 2017 loading.io).
+
 ## References
 
+### Methods
+
+- Aarts E, Verhage M, Veenvliet JV, Dolan CV, van der Sluis S (2014). A
+  solution to dependency: using multilevel analysis to accommodate nested
+  data. *Nature Neuroscience* 17(4):491–496.
+- Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
+  restricted maximum likelihood. *Biometrics* 53(3):983–997.
+- Schielzeth H, Nakagawa S (2013). Nested by design: model fitting and
+  interpretation in a mixed model era. *Methods in Ecology and Evolution*
+  4(1):14–24.
+- Bolker B, et al. GLMM FAQ: Nested or crossed?
+  https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#nested-or-crossed
+- Tukey JW (1953). The problem of multiple comparisons. Unpublished
+  manuscript, reprinted in *The Collected Works of John W. Tukey*, Vol. VIII
+  (1994). Chapman & Hall.
+- Kramer CY (1956). Extension of multiple range tests to group means with
+  unequal numbers of replications. *Biometrics* 12(3):307–310.
+- Dunn OJ (1961). Multiple comparisons among means. *Journal of the American
+  Statistical Association* 56(293):52–64.
+- Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
+  using real-time quantitative PCR and the 2^-ΔΔCT method. *Methods*
+  25(4):402–408.
+
+### Software
+
+- R Core Team (2025). R: A language and environment for statistical
+  computing. R Foundation for Statistical Computing, Vienna, Austria.
+  https://www.R-project.org/
 - Bates D, Mächler M, Bolker B, Walker S (2015). Fitting linear mixed-effects
   models using lme4. *Journal of Statistical Software* 67(1):1–48.
 - Kuznetsova A, Brockhoff PB, Christensen RHB (2017). lmerTest package: tests
@@ -78,10 +111,17 @@ Released under the [MIT License](LICENSE).
 - Halekoh U, Højsgaard S (2014). A Kenward-Roger approximation and parametric
   bootstrap methods for tests in linear mixed models – the R package
   pbkrtest. *Journal of Statistical Software* 59(9):1–32.
-- Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
-  restricted maximum likelihood. *Biometrics* 53(3):983–997.
-- Lenth RV. emmeans: Estimated Marginal Means, aka Least-Squares Means.
-  R package.
-- Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
-  using real-time quantitative PCR and the 2^-ΔΔCT method. *Methods*
-  25(4):402–408.
+- Lenth R, Piaskowski J (2026). emmeans: Estimated marginal means, aka
+  least-squares means. R package version 2.0.4.
+  doi:10.32614/CRAN.package.emmeans
+- Chang W, Cheng J, Allaire JJ, Sievert C, Schloerke B, Aden-Buie G, Xie Y,
+  Allen J, McPherson J, Dipert A, Borges B (2026). shiny: Web application
+  framework for R. R package version 1.14.0. doi:10.32614/CRAN.package.shiny
+- Sievert C, Cheng J, Aden-Buie G (2026). bslib: Custom 'Bootstrap' 'Sass'
+  themes for 'shiny' and 'rmarkdown'. R package version 0.12.0.
+  doi:10.32614/CRAN.package.bslib
+- Schloerke B, Chang W, Stagg G, Aden-Buie G (2026). shinylive: Run 'shiny'
+  applications in the browser. R package version 0.5.0.
+  doi:10.32614/CRAN.package.shinylive
+- Stagg GW, Lionel H, et al. (2023). webR: The statistical language R
+  compiled to WebAssembly via Emscripten. https://github.com/r-wasm/webr

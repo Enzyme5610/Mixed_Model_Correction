@@ -508,6 +508,10 @@ Relative or fold-change Y axes work best when parameters have different units.
 
 If you use this tool in a publication, poster or presentation, please
 acknowledge both authors.
+
+Loading screen animation: [loading-bar](https://github.com/loadingio/loading-bar)
+by loading.io (MIT License). Full references are in the project's
+[README](https://github.com/Enzyme5610/Mixed_Model_Correction#references).
 ")
     )
   )
