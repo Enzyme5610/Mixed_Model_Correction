@@ -55,6 +55,9 @@ adjustable). The Y axis can show values as entered, relative to a reference grou
 data, e.g. physiology), or as fold change 2^-ΔΔCt (ΔCt data, qPCR).
 Statistics always use the values as entered.
 
+**All parameters in one figure** shows the selected parameters side by side on
+one shared Y axis, with the groups next to each other for each parameter.
+
 ## Credits
 
 - Original R script: **Dr. Luis Gustavo Hernandez Carballo**

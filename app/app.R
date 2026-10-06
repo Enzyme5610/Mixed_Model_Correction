@@ -103,40 +103,23 @@ format_p <- function(p) {
 
 plot_defaults <- list(type = "dots", layout = "side", dots = TRUE, color = TRUE,
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
-                      err = "ci", dir = "both", caps = TRUE, center = "diamond")
+                      err = "ci", dir = "both", caps = TRUE, center = "diamond",
+                      rot = "auto")
 
-draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
-  opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
+# Display values, center and error bars for one parameter
+plot_stats <- function(datos, res, opt) {
   lev <- levels(datos$Tx)
-  k <- length(lev)
-  lines <- levels(datos$Line)
-  by_line <- opt$color && length(lines) > 0
-  cols <- if (by_line) hcl.colors(length(lines), "Dark 3") else "grey45"
-  grp <- if (by_line) as.integer(datos$Line) else 1
   means <- res$means
-  pw <- res$pairs
-
-  # Reference group plotted first
-  ref <- if (isTRUE(opt$ref %in% lev)) opt$ref else lev[1]
-  ord <- c(ref, setdiff(lev, ref))
-  pos <- match(lev, ord)
-  xs <- pos[as.integer(datos$Tx)]
-  xm <- pos[match(as.character(means$Tx), lev)]
-
-  # Display scale; stats stay on entered values
+  ref <- if (isTRUE(opt$ref %in% lev)) opt$ref else lev[1]  # plotted first
   ref_mean <- means$emmean[as.character(means$Tx) == ref]
   scale <- if (opt$scale == "ratio" && ref_mean == 0) "raw" else opt$scale
+  # Display scale; stats stay on entered values
   tf <- switch(scale, raw = identity,
                ratio = function(v) v / ref_mean,
                fc = function(v) 2^-(v - ref_mean))
-  ylab <- switch(scale, raw = res$label,
-                 ratio = paste("Relative to", ref),
-                 fc = bquote("Fold change vs" ~ .(ref) ~ (2^{-Delta*Delta*Ct})))
-  if (nzchar(trimws(opt$ylab))) ylab <- opt$ylab  # user label wins
   y <- tf(datos[[res$var]])
-
-  # Center and error bars: model-based (CI, SE) or raw (SEM, SD)
   g <- as.character(means$Tx)
+  # Model-based (CI, SE) or raw (SEM, SD)
   if (opt$err %in% c("sem", "sd")) {
     m <- tapply(y, datos$Tx, mean, na.rm = TRUE)[g]
     s <- tapply(y, datos$Tx, sd, na.rm = TRUE)[g]
@@ -149,6 +132,65 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     lo <- pmin(tf(a), tf(b)); hi <- pmax(tf(a), tf(b))
   }
   if (opt$dir == "up") lo <- m
+  list(ref = ref, ord = c(ref, setdiff(lev, ref)), scale = scale, y = y,
+       g = g, m = m, lo = lo, hi = hi)
+}
+
+scale_label <- function(st, raw, opt) {
+  if (nzchar(trimws(opt$ylab))) return(opt$ylab)  # user label wins
+  switch(st$scale, raw = raw,
+         ratio = paste("Relative to", st$ref),
+         fc = bquote("Fold change vs" ~ .(st$ref) ~ (2^{-Delta*Delta*Ct})))
+}
+
+draw_err <- function(xe, st, opt, half = 0.15) {
+  if (opt$caps) {
+    suppressWarnings(arrows(xe, st$lo, xe, st$hi, angle = 90, length = 0.05, lwd = 2,
+                            code = if (opt$dir == "up") 2 else 3))
+  } else segments(xe, st$lo, xe, st$hi, lwd = 2)
+  if (opt$type == "bar") return()
+  if (opt$center == "line") segments(xe - half, st$m, xe + half, st$m, lwd = 3)
+  else points(xe, st$m, pch = 23, bg = "white", cex = 1.4, lwd = 2)
+}
+
+# X labels at 0, 45 or 90 degrees; "auto" picks 90 when crowded
+label_angle <- function(labels, opt, crowded = FALSE) {
+  if (opt$rot == "auto") if (crowded) 90 else 0 else as.numeric(opt$rot)
+}
+bottom_mar <- function(labels, angle) {
+  if (angle == 0) 3 else 1.5 + max(nchar(labels)) * if (angle == 90) 0.65 else 0.5
+}
+x_labels <- function(at, labels, angle) {
+  if (angle == 45) {
+    axis(1, at = at, labels = FALSE)
+    text(at, par("usr")[3] - 0.04 * diff(par("usr")[3:4]), labels,
+         srt = 45, adj = 1, xpd = TRUE)
+  } else axis(1, at = at, labels = labels, las = if (angle == 90) 2 else 1)
+}
+
+err_label <- function(opt) {
+  switch(opt$err, ci = "Model mean\n± 95% CI", se = "Model mean\n± SE",
+         sem = "Mean ± SEM", sd = "Mean ± SD")
+}
+
+draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
+  opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
+  lev <- levels(datos$Tx)
+  k <- length(lev)
+  lines <- levels(datos$Line)
+  by_line <- opt$color && length(lines) > 0
+  cols <- if (by_line) hcl.colors(length(lines), "Dark 3") else "grey45"
+  grp <- if (by_line) as.integer(datos$Line) else 1
+  pw <- res$pairs
+
+  st <- plot_stats(datos, res, opt)
+  ord <- st$ord
+  pos <- match(lev, ord)
+  xs <- pos[as.integer(datos$Tx)]
+  xm <- pos[match(st$g, lev)]
+  scale <- st$scale
+  ylab <- scale_label(st, res$label, opt)
+  y <- st$y; m <- st$m; lo <- st$lo; hi <- st$hi
 
   rng <- range(c(y, lo, hi, if (opt$type == "bar") 0), na.rm = TRUE)
   h <- diff(rng)
@@ -157,12 +199,13 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
   # Shrink text and margins below 5 in
+  ang <- label_angle(ord, opt)
   op <- par(cex = min(1, min(dev.size("in")) / 5),
-            mar = c(3, 4.5, if (k > 2) 4.5 else 3.8, 7.5))
+            mar = c(bottom_mar(ord, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, k + 0.5), ylim = c(rng[1] - 0.05 * h, top),
        xaxt = "n", xlab = "", ylab = ylab, las = 1)
-  axis(1, at = seq_len(k), labels = ord)
+  x_labels(seq_len(k), ord, ang)
   if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
   if (k > 2) {
     title(main = res$label, line = 2.6)
@@ -198,14 +241,8 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     points(xj, y, pch = 19, cex = opt$size, col = adjustcolor(cols[grp], 0.75))
   }
 
-  # Error bars and mean
-  if (opt$caps) {
-    suppressWarnings(arrows(xe, lo, xe, hi, angle = 90, length = 0.05, lwd = 2,
-                            code = if (opt$dir == "up") 2 else 3))
-  } else segments(xe, lo, xe, hi, lwd = 2)
+  draw_err(xe, st, opt)
   line_mark <- opt$type != "bar" && opt$center == "line"
-  if (line_mark) segments(xe - 0.15, m, xe + 0.15, m, lwd = 3)
-  else if (opt$type != "bar") points(xe, m, pch = 23, bg = "white", cex = 1.4, lwd = 2)
 
   # Brackets; emmeans pair order matches combn on model levels
   prs <- combn(k, 2)
@@ -223,9 +260,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     legend(lx, usr[4], legend = lines, title = "Line", col = cols, pch = 19,
            bty = "n", xpd = TRUE, cex = 0.85)
   }
-  lab <- switch(opt$err, ci = "Model mean\n± 95% CI", se = "Model mean\n± SE",
-                sem = "Mean ± SEM", sd = "Mean ± SD")
-  key <- data.frame(lab = lab, pch = if (opt$type == "bar") 22 else if (line_mark) NA else 23,
+  key <- data.frame(lab = err_label(opt), pch = if (opt$type == "bar") 22 else if (line_mark) NA else 23,
                     bg = if (opt$type == "bar") "grey88" else "white", col = "black",
                     lty = if (line_mark) 1 else NA)
   if (opt$type == "violin") key <- rbind(data.frame(lab = "Distribution", pch = 22, bg = "grey92", col = "grey45", lty = NA), key)
@@ -233,6 +268,91 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   legend(lx, usr[3] + 0.3 * diff(usr[3:4]), legend = key$lab, pch = key$pch, lty = key$lty,
          lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
          cex = 0.8, y.intersp = 1.4)
+}
+
+# All parameters in one figure: parameters on x, groups side by side
+draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
+  opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
+  n <- length(results)
+  sts <- lapply(results, function(r) plot_stats(datos, r, opt))
+  ord <- sts[[1]]$ord
+  k <- length(ord)
+  w <- 0.8 / k
+  off <- (seq_len(k) - (k + 1) / 2) * w
+  cols <- c("grey40", hcl.colors(max(k - 1, 1), "Dark 3"))[seq_len(k)]
+  gi <- match(as.character(datos$Tx), ord)
+  labels <- vapply(results, `[[`, "", "label")
+
+  all_v <- unlist(lapply(sts, function(s) c(s$y, s$lo, s$hi)))
+  rng <- range(c(all_v, if (opt$type == "bar") 0), na.rm = TRUE)
+  h <- diff(rng)
+  if (h == 0) h <- 1
+  n_pairs <- if (opt$brackets) nrow(results[[1]]$pairs) else 0
+  top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
+
+  ang <- label_angle(labels, opt, crowded = n > 4 || max(nchar(labels)) > 10)
+  op <- par(cex = min(1, min(dev.size("in")) / 5),
+            mar = c(bottom_mar(labels, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
+  on.exit(par(op))
+  plot(NA, xlim = c(0.5, n + 0.5), ylim = c(rng[1] - 0.05 * h, top), xaxt = "n",
+       xlab = "", ylab = scale_label(sts[[1]], "Value", opt), las = 1)
+  x_labels(seq_len(n), labels, ang)
+  if (sts[[1]]$scale != "raw") abline(h = 1, lty = 3, col = "grey60")
+  title(main = paste(ord, collapse = " vs "), line = if (k > 2) 2.6 else 1.6)
+  mtext("Linear mixed model, Kenward-Roger", side = 3, line = if (k > 2) 1.2 else 0.4,
+        cex = 0.8 * par("cex"))
+  if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
+                   side = 3, line = 0.3, cex = 0.8 * par("cex"))
+
+  set.seed(1)
+  show_dots <- opt$type == "dots" || opt$dots
+  for (i in seq_len(n)) {
+    st <- sts[[i]]
+    xm <- i + off[match(st$g, ord)]
+    xs <- i + off[gi]
+    if (opt$type == "bar") {
+      rect(xm - w * 0.4, 0, xm + w * 0.4, st$m, border = "grey30",
+           col = adjustcolor(cols[match(st$g, ord)], 0.3))
+    }
+    if (opt$type == "violin") {
+      for (j in seq_len(k)) {
+        v <- st$y[gi == j & !is.na(st$y)]
+        if (length(v) < 2 || diff(range(v)) == 0) next
+        d <- density(v, from = min(v), to = max(v))
+        hw <- d$y / max(d$y) * w * 0.45
+        x0 <- i + off[j]
+        polygon(c(x0 - hw, rev(x0 + hw)), c(d$x, rev(d$x)), border = "grey45",
+                col = adjustcolor(cols[j], 0.2))
+      }
+    }
+    if (show_dots) {
+      points(xs + runif(length(xs), -w * 0.25, w * 0.25), st$y, pch = 19,
+             cex = opt$size, col = adjustcolor(cols[gi], 0.75))
+    }
+    draw_err(xm, st, opt, half = w * 0.3)
+
+    # Brackets per parameter; emmeans pair order matches combn on model levels
+    pw <- results[[i]]$pairs
+    prs <- combn(levels(datos$Tx), 2)
+    base <- max(c(st$y, st$hi), na.rm = TRUE)
+    for (p in seq_len(n_pairs)) {
+      xa <- sort(i + off[match(prs[, p], ord)])
+      yb <- base + h * (0.04 + 0.08 * (p - 1))
+      segments(c(xa[1], xa[1], xa[2]), c(yb - h * 0.015, yb, yb),
+               c(xa[1], xa[2], xa[2]), c(yb, yb, yb - h * 0.015))
+      text(mean(xa), yb, format_p(pw$p.value[p]), pos = 3, cex = 0.65, offset = 0.15)
+    }
+  }
+
+  usr <- par("usr")
+  lx <- usr[2] + 0.02 * diff(usr[1:2])
+  legend(lx, usr[4], legend = ord, title = "Group", pch = 22, pt.cex = 1.6,
+         pt.bg = adjustcolor(cols, 0.5), col = cols, bty = "n", xpd = TRUE, cex = 0.85)
+  line_mark <- opt$type != "bar" && opt$center == "line"
+  legend(lx, usr[3] + 0.2 * diff(usr[3:4]), legend = err_label(opt),
+         pch = if (opt$type == "bar") NA else if (line_mark) NA else 23,
+         lty = if (line_mark || opt$type == "bar") 1 else NA, lwd = 2, pt.bg = "white",
+         bty = "n", xpd = TRUE, cex = 0.8)
 }
 
 # ---- UI --------------------------------------------------------------------
@@ -287,7 +407,13 @@ ui <- page_sidebar(
       layout_columns(
         col_widths = c(4, 4, 4),
         div(
-          selectInput("plot_param", "Parameter", choices = NULL),
+          radioButtons("fig", "Figure", choices = c(
+            "One parameter" = "one", "All parameters in one figure" = "all")),
+          conditionalPanel("input.fig == 'one'",
+            selectInput("plot_param", "Parameter", choices = NULL)),
+          conditionalPanel("input.fig == 'all'",
+            selectizeInput("multi", "Parameters", choices = NULL, multiple = TRUE,
+                           options = list(plugins = list("remove_button")))),
           radioButtons("type", "Plot type", inline = TRUE,
                        choices = c("Dots" = "dots", "Bar" = "bar", "Violin" = "violin")),
           conditionalPanel("input.type == 'dots'",
@@ -313,6 +439,8 @@ ui <- page_sidebar(
             "Fold change 2^-ΔΔCt (ΔCt data)" = "fc")),
           textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
           selectInput("ref", "Reference group", choices = NULL),
+          selectInput("rot", "Label angle", choices = c(
+            "Auto" = "auto", "Horizontal" = "0", "45°" = "45", "Vertical" = "90")),
           checkboxInput("color_line", "Color dots by Line", TRUE),
           checkboxInput("brackets", "Show p-values", TRUE)
         ),
@@ -326,8 +454,8 @@ ui <- page_sidebar(
       ),
       plotOutput("plot", width = "auto", height = "auto", fill = FALSE),
       div(
-        actionButton("dl_png", "PNG (this parameter)", icon = icon("download")),
-        actionButton("dl_pdf", "PDF (this parameter)", icon = icon("download")),
+        actionButton("dl_png", "PNG (this figure)", icon = icon("download")),
+        actionButton("dl_pdf", "PDF (this figure)", icon = icon("download")),
         actionButton("dl_pdf_all", "PDF (all parameters)", icon = icon("download"))
       )
     )),
@@ -362,6 +490,10 @@ entered.
 
 **Error bars** can show the model's 95% CI or SE (matching the statistics),
 or the SEM or SD of the raw values (which ignore Line and Batch).
+
+**All parameters in one figure** places the selected parameters side by side
+on one shared Y axis, with the groups next to each other for each parameter.
+Relative or fold-change Y axes work best when parameters have different units.
 
 ---
 
@@ -409,6 +541,7 @@ server <- function(input, output, session) {
   observeEvent(results(), {
     labels <- vapply(results()$res, `[[`, "", "label")
     updateSelectInput(session, "plot_param", choices = labels)
+    updateSelectizeInput(session, "multi", choices = labels, selected = labels)
     lev <- levels(results()$prep$datos$Tx)
     ctrl <- grep("^(control|ctrl|gfp)", lev, ignore.case = TRUE, value = TRUE)
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
@@ -450,7 +583,7 @@ server <- function(input, output, session) {
                        color = input$color_line, size = input$pt_size,
                        brackets = input$brackets, scale = input$scale, ref = input$ref,
                        ylab = input$ylab, err = input$err, dir = input$dir,
-                       caps = input$caps, center = input$center))
+                       caps = input$caps, center = input$center, rot = input$rot))
 
   # Size in inches, clamped to 3-12
   dims <- reactive({
@@ -459,8 +592,17 @@ server <- function(input, output, session) {
     c(w = w, h = if (isTRUE(input$square)) w else fit(input$h))
   })
 
+  # Current figure: one parameter or all selected in one figure
+  draw_current <- function(r) {
+    if (identical(input$fig, "all")) {
+      sel <- r$res[vapply(r$res, `[[`, "", "label") %in% input$multi]
+      validate(need(length(sel) > 0, "Select at least one parameter."))
+      draw_multi(r$prep$datos, sel, r$adjust, opt())
+    } else draw_plot(r$prep$datos, current(), r$adjust, opt())
+  }
+
   output$plot <- renderPlot(
-    draw_plot(results()$prep$datos, current(), results()$adjust, opt()),
+    draw_current(results()),
     width = function() dims()[["w"]] * 96, height = function() dims()[["h"]] * 96,
     res = 96)
 
@@ -493,13 +635,16 @@ server <- function(input, output, session) {
               function(f) write.csv(pairs_df(), f, row.names = FALSE))
   })
 
-  plot_name <- function(r, ext) paste0(r$base, "_", make.names(input$plot_param), ".", ext)
+  plot_name <- function(r, ext) {
+    what <- if (identical(input$fig, "all")) "all_parameters" else make.names(input$plot_param)
+    paste0(r$base, "_", what, ".", ext)
+  }
 
   observeEvent(input$dl_png, {
     r <- ready(); req(r)
     d <- dims()
     save_file(plot_name(r, "png"), "image/png", function(f) {
-      plotPNG(function() draw_plot(r$prep$datos, current(), r$adjust, opt()),
+      plotPNG(function() draw_current(r),
               filename = f, width = d[["w"]] * 300, height = d[["h"]] * 300, res = 300)
     })
   })
@@ -508,7 +653,7 @@ server <- function(input, output, session) {
     r <- ready(); req(r)
     save_file(plot_name(r, "pdf"), "application/pdf", function(f) {
       pdf(f, width = dims()[["w"]], height = dims()[["h"]])
-      draw_plot(r$prep$datos, current(), r$adjust, opt())
+      draw_current(r)
       dev.off()
     })
   })
