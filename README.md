@@ -41,7 +41,7 @@ tested by a Type II F test using Kenward-Roger degrees of freedom. With one
 Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
 batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
 
-If lines share batches (all lines run together in each batch, e.g. on the
+If lines share batches (multiple lines run per batch, e.g. on the
 same qPCR plate), answer **"Yes"** to **"Do lines share batches?"** to use
 the crossed model
 `parameter ~ Tx + (1 | Line) + (1 | Batch)`. Batch labels must then mean the
