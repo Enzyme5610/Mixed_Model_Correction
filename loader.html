@@ -1,0 +1,57 @@
+<!-- Loading screen, added to the built site by the deploy workflow -->
+<!-- Progress bar: loading-bar (MIT), https://github.com/loadingio/loading-bar -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@loadingio/loading-bar@0.1.1/dist/loading-bar.css">
+<script src="https://cdn.jsdelivr.net/npm/@loadingio/loading-bar@0.1.1/dist/loading-bar.min.js"></script>
+<style>
+  #mmc-loader { position: fixed; inset: 0; z-index: 9999; background: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: system-ui, sans-serif; color: #333; transition: opacity .6s; }
+  #mmc-loader .ldBar, #mmc-loader .ldBar svg { width: 140px !important; height: 160px !important; }
+  #mmc-loader .ldBar-label { display: none; }
+  #mmc-loader h2 { margin: 18px 0 6px; font-size: 1.3em; font-weight: 600; }
+  #mmc-loader p { margin: 0; color: #666; min-height: 1.4em; }
+</style>
+<div id="mmc-loader">
+  <div id="mmc-flask" class="ldBar" data-type="fill" data-fill-dir="btt" data-duration="6"
+       data-fill-background="#d5e2e5" data-fill-background-extrude="0.8"
+       data-fill="data:ldbar/res,bubble(#2a9d8f,#fff,40,2)" data-pattern-size="18"
+       data-path="M10 2L14 2L14 8L20 19Q21 22 18 22L6 22Q3 22 4 19L10 8Z"></div>
+  <h2>Loading Mixed Model Correction</h2>
+  <p id="mmc-msg">Starting R in your browser…</p>
+</div>
+<script>
+  (function () {
+    var tips = ["Starting R in your browser…",
+                "Takes about 30 seconds.",
+                "Your data stays on your computer."];
+    var el = document.getElementById("mmc-loader"), msg = document.getElementById("mmc-msg");
+    var bar = new ldBar("#mmc-flask"), t = 0, full = false;
+    // Loop the fill: progress isn't reported, so it shows activity, not a percentage
+    function cycle() { full = !full; bar.set(full ? 100 : 0, full); }
+    cycle();
+    var fill = setInterval(cycle, 6500);
+
+    // Wave: a sine strip added to the fill's clip, riding its top edge
+    var clip = document.querySelector("#mmc-flask clipPath"), level = clip.querySelector("rect");
+    var wave = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    var d = "M-12 0";
+    for (var x = -12; x < 36; x += 6) d += " q1.5 -0.8 3 0 t3 0";
+    wave.setAttribute("d", d + " V2 H-12 Z");
+    clip.appendChild(wave);
+    (function tick(ts) {
+      wave.setAttribute("transform", "translate(" + -(ts / 400 % 6) + "," + level.getAttribute("y") + ")");
+      if (document.contains(el)) requestAnimationFrame(tick);
+    })(0);
+    var tip = setInterval(function () { msg.textContent = tips[++t % tips.length]; }, 5000);
+    function done() {
+      clearInterval(fill); clearInterval(tip); clearInterval(poll);
+      el.style.opacity = 0; setTimeout(function () { el.remove(); }, 700);
+    }
+    var start = Date.now();
+    var poll = setInterval(function () {
+      var f = document.querySelector("iframe");
+      var ready = f && f.contentDocument && f.contentDocument.querySelector("#run");
+      if (ready || Date.now() - start > 240000) done();  // never block for more than 4 min
+    }, 500);
+  })();
+</script>

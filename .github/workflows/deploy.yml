@@ -38,6 +38,9 @@ jobs:
       - name: Build Shinylive site
         run: Rscript -e 'shinylive::export("app", "site")'
 
+      - name: Add loading screen
+        run: Rscript -e 'f <- "site/index.html"; x <- readLines(f); i <- grep("</body>", x, fixed = TRUE); writeLines(append(x, readLines("loader.html"), i - 1), f)'
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
