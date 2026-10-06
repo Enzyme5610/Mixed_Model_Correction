@@ -49,8 +49,9 @@ same run for every line.
 
 ## Plots
 
-Dots, bars or violins showing each sample and the model mean ± 95% CI. The
-Y axis can show values as entered, relative to a reference group (linear
+Dots, bars or violins showing each sample, with error bars as the model's
+95% CI or SE, or the raw SEM or SD (caps, direction and mean marker are
+adjustable). The Y axis can show values as entered, relative to a reference group (linear
 data, e.g. physiology), or as fold change 2^-ΔΔCt (ΔCt data, qPCR).
 Statistics always use the values as entered.
 

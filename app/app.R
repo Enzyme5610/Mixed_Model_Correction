@@ -8,10 +8,11 @@ library(emmeans)
 # ---- Model (Kenward-Roger) ------------------------------
 
 prepare_data <- function(path) {
-  datos <- read.csv(path, header = TRUE, check.names = FALSE)
+  datos <- read.csv(path, header = TRUE, check.names = FALSE, na.strings = c("", "NA"))
   original_names <- names(datos)
   if (!"Tx" %in% original_names) stop("The table must include a column named Tx.")
   names(datos) <- make.names(original_names, unique = TRUE)
+  datos <- datos[!is.na(datos$Tx), ]  # drop empty rows
   datos$Tx <- as.factor(datos$Tx)
   for (v in intersect(c("Line", "Batch"), names(datos))) datos[[v]] <- as.factor(datos[[v]])
   cols <- which(!original_names %in% c("Tx", "Line", "Batch") &
@@ -67,7 +68,7 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
     result_table <- as.data.frame(res$anova)
     res$table <- data.frame(
       Parameter = label,
-      Term = rownames(result_table),
+      Comparison = paste(levels(datos$Tx), collapse = " vs "),
       DF_method = "Kenward-Roger",
       result_table,
       row.names = NULL,
@@ -101,7 +102,8 @@ format_p <- function(p) {
 }
 
 plot_defaults <- list(type = "dots", layout = "side", dots = TRUE, color = TRUE,
-                      size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "")
+                      size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
+                      err = "ci", dir = "both", caps = TRUE, center = "diamond")
 
 draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
@@ -132,9 +134,21 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
                  fc = bquote("Fold change vs" ~ .(ref) ~ (2^{-Delta*Delta*Ct})))
   if (nzchar(trimws(opt$ylab))) ylab <- opt$ylab  # user label wins
   y <- tf(datos[[res$var]])
-  m <- tf(means$emmean)
-  lo <- pmin(tf(means$lower.CL), tf(means$upper.CL))
-  hi <- pmax(tf(means$lower.CL), tf(means$upper.CL))
+
+  # Center and error bars: model-based (CI, SE) or raw (SEM, SD)
+  g <- as.character(means$Tx)
+  if (opt$err %in% c("sem", "sd")) {
+    m <- tapply(y, datos$Tx, mean, na.rm = TRUE)[g]
+    s <- tapply(y, datos$Tx, sd, na.rm = TRUE)[g]
+    if (opt$err == "sem") s <- s / sqrt(tapply(!is.na(y), datos$Tx, sum)[g])
+    lo <- m - s; hi <- m + s
+  } else {
+    m <- tf(means$emmean)
+    a <- if (opt$err == "se") means$emmean - means$SE else means$lower.CL
+    b <- if (opt$err == "se") means$emmean + means$SE else means$upper.CL
+    lo <- pmin(tf(a), tf(b)); hi <- pmax(tf(a), tf(b))
+  }
+  if (opt$dir == "up") lo <- m
 
   rng <- range(c(y, lo, hi, if (opt$type == "bar") 0), na.rm = TRUE)
   h <- diff(rng)
@@ -184,9 +198,14 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     points(xj, y, pch = 19, cex = opt$size, col = adjustcolor(cols[grp], 0.75))
   }
 
-  # Model means ± 95% CI
-  arrows(xe, lo, xe, hi, angle = 90, code = 3, length = 0.05, lwd = 2)
-  if (opt$type != "bar") points(xe, m, pch = 23, bg = "white", cex = 1.4, lwd = 2)
+  # Error bars and mean
+  if (opt$caps) {
+    suppressWarnings(arrows(xe, lo, xe, hi, angle = 90, length = 0.05, lwd = 2,
+                            code = if (opt$dir == "up") 2 else 3))
+  } else segments(xe, lo, xe, hi, lwd = 2)
+  line_mark <- opt$type != "bar" && opt$center == "line"
+  if (line_mark) segments(xe - 0.15, m, xe + 0.15, m, lwd = 3)
+  else if (opt$type != "bar") points(xe, m, pch = 23, bg = "white", cex = 1.4, lwd = 2)
 
   # Brackets; emmeans pair order matches combn on model levels
   prs <- combn(k, 2)
@@ -204,12 +223,16 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     legend(lx, usr[4], legend = lines, title = "Line", col = cols, pch = 19,
            bty = "n", xpd = TRUE, cex = 0.85)
   }
-  key <- data.frame(lab = "Model mean\n± 95% CI", pch = if (opt$type == "bar") 22 else 23,
-                    bg = if (opt$type == "bar") "grey88" else "white", col = "black")
-  if (opt$type == "violin") key <- rbind(data.frame(lab = "Distribution", pch = 22, bg = "grey92", col = "grey45"), key)
-  if (show_dots) key <- rbind(data.frame(lab = "Sample", pch = 19, bg = NA, col = "grey40"), key)
-  legend(lx, usr[3] + 0.3 * diff(usr[3:4]), legend = key$lab, pch = key$pch,
-         col = key$col, pt.bg = key$bg, bty = "n", xpd = TRUE, cex = 0.8, y.intersp = 1.4)
+  lab <- switch(opt$err, ci = "Model mean\n± 95% CI", se = "Model mean\n± SE",
+                sem = "Mean ± SEM", sd = "Mean ± SD")
+  key <- data.frame(lab = lab, pch = if (opt$type == "bar") 22 else if (line_mark) NA else 23,
+                    bg = if (opt$type == "bar") "grey88" else "white", col = "black",
+                    lty = if (line_mark) 1 else NA)
+  if (opt$type == "violin") key <- rbind(data.frame(lab = "Distribution", pch = 22, bg = "grey92", col = "grey45", lty = NA), key)
+  if (show_dots) key <- rbind(data.frame(lab = "Sample", pch = 19, bg = NA, col = "grey40", lty = NA), key)
+  legend(lx, usr[3] + 0.3 * diff(usr[3:4]), legend = key$lab, pch = key$pch, lty = key$lty,
+         lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
+         cex = 0.8, y.intersp = 1.4)
 }
 
 # ---- UI --------------------------------------------------------------------
@@ -271,7 +294,17 @@ ui <- page_sidebar(
             radioButtons("layout", "Means", inline = TRUE,
                          choices = c("Beside dots" = "side", "Over dots" = "overlay"))),
           conditionalPanel("input.type != 'dots'",
-            checkboxInput("dots", "Show dots", TRUE))
+            checkboxInput("dots", "Show dots", TRUE)),
+          selectInput("err", "Error bars", choices = c(
+            "95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd")),
+          conditionalPanel("input.err == 'sem' || input.err == 'sd'",
+            helpText("SEM and SD use the raw values and ignore Line and Batch.")),
+          radioButtons("dir", NULL, inline = TRUE,
+                       choices = c("Both directions" = "both", "Above only" = "up")),
+          checkboxInput("caps", "Caps", TRUE),
+          conditionalPanel("input.type != 'bar'",
+            radioButtons("center", "Mean marker", inline = TRUE,
+                         choices = c("Diamond" = "diamond", "Line" = "line")))
         ),
         div(
           selectInput("scale", "Y axis", choices = c(
@@ -326,6 +359,9 @@ dots, bars or violins. The Y axis can show values relative to a reference
 group: as a ratio for linear data (e.g. electrophysiology), or as fold change
 2^-ΔΔCt when the values are ΔCt (qPCR). Statistics always use the values as
 entered.
+
+**Error bars** can show the model's 95% CI or SE (matching the statistics),
+or the SEM or SD of the raw values (which ignore Line and Batch).
 
 ---
 
@@ -413,7 +449,8 @@ server <- function(input, output, session) {
   opt <- reactive(list(type = input$type, layout = input$layout, dots = input$dots,
                        color = input$color_line, size = input$pt_size,
                        brackets = input$brackets, scale = input$scale, ref = input$ref,
-                       ylab = input$ylab))
+                       ylab = input$ylab, err = input$err, dir = input$dir,
+                       caps = input$caps, center = input$center))
 
   # Size in inches, clamped to 3-12
   dims <- reactive({
