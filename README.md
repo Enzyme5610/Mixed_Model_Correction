@@ -49,21 +49,26 @@ same run for every line.
 
 ## Plots
 
-Dots, bars or violins showing each sample, with error bars as the model's
-95% CI or SE, or the raw SEM or SD (caps, direction and mean marker are
-adjustable). The Y axis can show values as entered, relative to a reference group (linear
-data, e.g. physiology), or as fold change 2^-ΔΔCt (ΔCt data, qPCR).
+Dots, bars or violins showing each sample, with error bars (95% CI or SE, or 
+the raw SEM or SD). The Y axis can show values as entered, relative to a 
+reference group (linear data), or as fold change 2^-ΔΔCt (ΔCt data, qPCR). 
 Statistics always use the values as entered.
 
 **Batch-adjusted values** (optional) subtract each batch's estimated shift
 from the plotted values, using the model's random-effect estimates (BLUPs).
-With the crossed model this removes run-wide (e.g. qPCR plate) shifts; with
-the nested model, each line's batch-to-batch deviation. This is for display
-only: statistics are unchanged, and adjusted values shouldn't be re-tested.
+When used with crossed model: removes batch shifts.
+When used with nested model: each line's batch-to-batch deviation. 
+For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
 
 A reference (control) group sets the comparison direction in tables and plots.
-Significance can be shown as p-values or stars (ns, *, **, ***, ****), and
-dots can be colored by Line or Batch.
+Significance can be shown as p-values or stars (ns, *, **, ***, ****).
+
+Groups appear in CSV order (reference first) and can be reordered by
+dragging; each group's color can be picked. Dots can be colored by Line,
+Batch or Group and shaped by Line or Batch, with the color and shape of
+each level selectable.
+
+Plots download as PNG, TIFF, JPEG, PDF, SVG or EMF. EMF is editable in PowerPoint.
 
 **All parameters in one figure** shows the selected parameters side by side on
 one shared Y axis, with the groups next to each other for each parameter.
@@ -143,6 +148,8 @@ by loading.io (MIT License, © 2017 loading.io).
 - Halekoh U, Højsgaard S (2014). A Kenward-Roger approximation and parametric
   bootstrap methods for tests in linear mixed models – the R package
   pbkrtest. *Journal of Statistical Software* 59(9):1–32.
+- Johnson P (2026). devEMF: EMF graphics output device. R package version 4.6.
+  doi:10.32614/CRAN.package.devEMF
 - Lenth R, Piaskowski J (2026). emmeans: Estimated marginal means, aka
   least-squares means. R package version 2.0.4.
   doi:10.32614/CRAN.package.emmeans
