@@ -10,48 +10,67 @@
   #mmc-loader .ldBar-label { display: none; }
   #mmc-loader h2 { margin: 18px 0 6px; font-size: 1.3em; font-weight: 600; }
   #mmc-loader p { margin: 0; color: #666; min-height: 1.4em; }
+  #mmc-loader small { margin-top: 4px; color: #999; }
 </style>
 <div id="mmc-loader">
-  <div id="mmc-flask" class="ldBar" data-type="fill" data-fill-dir="btt" data-duration="6"
+  <div id="mmc-flask" class="ldBar" data-type="fill" data-fill-dir="btt" data-duration="0.4"
        data-fill-background="#d5e2e5" data-fill-background-extrude="0.8"
        data-fill="data:ldbar/res,bubble(#2a9d8f,#fff,40,2)" data-pattern-size="18"
        data-path="M10 2L14 2L14 8L20 19Q21 22 18 22L6 22Q3 22 4 19L10 8Z"></div>
   <h2>Loading Mixed Model Correction</h2>
-  <p id="mmc-msg">Starting R in your browser…</p>
+  <p id="mmc-msg">Loading R…</p>
+  <small>Takes about 30 seconds.</small>
 </div>
 <script>
   (function () {
-    var tips = ["Starting R in your browser…",
-                "Takes about 30 seconds.",
-                "Your data stays on your computer."];
     var el = document.getElementById("mmc-loader"), msg = document.getElementById("mmc-msg");
-    var bar = new ldBar("#mmc-flask"), t = 0, full = false;
-    // Loop the fill: progress isn't reported, so it shows activity, not a percentage
-    function cycle() { full = !full; bar.set(full ? 100 : 0, full); }
-    cycle();
-    var fill = setInterval(cycle, 6500);
+    var bar = new ldBar("#mmc-flask"), p = 0, start = Date.now();
+    var core = {}, pkgStart = {}, pkgDone = {}, CORE = 4, lastPkg = 0;
+    var tracked = __MMC_SHIM__, PKGS = __MMC_PKGS__;  // set at build
 
-    // Wave: a sine strip added to the fill's clip, riding its top edge
-    var clip = document.querySelector("#mmc-flask clipPath"), level = clip.querySelector("rect");
-    var wave = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    var d = "M-12 0";
-    for (var x = -12; x < 36; x += 6) d += " q1.5 -0.8 3 0 t3 0";
-    wave.setAttribute("d", d + " V2 H-12 Z");
-    clip.appendChild(wave);
-    (function tick(ts) {
-      wave.setAttribute("transform", "translate(" + -(ts / 400 % 6) + "," + level.getAttribute("y") + ")");
-      if (document.contains(el)) requestAnimationFrame(tick);
-    })(0);
-    var tip = setInterval(function () { msg.textContent = tips[++t % tips.length]; }, 5000);
-    function done() {
-      clearInterval(fill); clearInterval(tip); clearInterval(poll);
-      el.style.opacity = 0; setTimeout(function () { el.remove(); }, 700);
+    // Route webR's worker through the reporter (same folder, so paths resolve as before)
+    if (tracked) {
+      var W = window.Worker;
+      window.Worker = class extends W {
+        constructor(url, opts) { super(String(url).replace(/webr-worker\.js$/, "mmc-worker.js"), opts); }
+      };
+      new BroadcastChannel("mmc-load").onmessage = function (e) {
+        var u = e.data.url, m = u.match(/packages\/([^/]+)\/[^/]+\.tgz/);
+        if (/R\.wasm|libRblas|libRlapack|library\.data\.gz/.test(u) && e.data.state === "done") core[u] = 1;
+        if (m) { (e.data.state === "done" ? pkgDone : pkgStart)[m[1]] = 1; lastPkg = Date.now(); }
+      };
     }
-    var start = Date.now();
-    var poll = setInterval(function () {
+
+    function set(v, text) {
+      if (v > p) { if (Math.round(v) > Math.round(p)) bar.set(Math.round(v)); p = v; }
+      msg.textContent = text;
+    }
+    var tick = setInterval(function () {
+      var nc = Object.keys(core).length, ns = Object.keys(pkgStart).length, nd = Object.keys(pkgDone).length;
+      if (!tracked) set(Math.min(90, (Date.now() - start) / 400), "Loading R and packages…");
+      else if (ns === 0) set(25 * nc / CORE, "Loading R…");
+      // Packages arrive in batches; done once none are pending or new for 2 s
+      else if (nd < ns || Date.now() - lastPkg < 2000)
+        set(25 + 55 * Math.min(1, nd / PKGS), "Downloading packages (" + nd + " of " + PKGS + ")");
+      else set(Math.max(p, 80) + (95 - Math.max(p, 80)) * 0.04, "Starting the app…");  // not observable
       var f = document.querySelector("iframe");
-      var ready = f && f.contentDocument && f.contentDocument.querySelector("#run");
-      if (ready || Date.now() - start > 240000) done();  // never block for more than 4 min
-    }, 500);
+      if ((f && f.contentDocument && f.contentDocument.querySelector("#run")) ||
+          Date.now() - start > 240000) {  // never block for more than 4 min
+        clearInterval(tick); bar.set(100); msg.textContent = "Ready";
+        setTimeout(function () { el.style.opacity = 0; setTimeout(function () { el.remove(); }, 700); }, 500);
+      }
+    }, 250);
+
+    // Wave on the liquid surface: troughs touch the fill level, crests rise above it
+    var clip = document.querySelector("#mmc-flask clipPath"), level = clip.querySelector("rect");
+    var wave = document.createElementNS("http://www.w3.org/2000/svg", "path"), A = 0.5, L = 10;
+    var d = "M-20 " + A;
+    for (var x = -20; x < 40; x += L) d += " q" + L / 4 + " " + -2 * A + " " + L / 2 + " 0 t" + L / 2 + " 0";
+    wave.setAttribute("d", d + " V3 H-20 Z");
+    clip.appendChild(wave);
+    (function loop(ts) {
+      wave.setAttribute("transform", "translate(" + -(ts / 250 % L) + "," + (level.getAttribute("y") - 2 * A) + ")");
+      if (document.contains(el)) requestAnimationFrame(loop);
+    })(0);
   })();
 </script>
