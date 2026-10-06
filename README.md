@@ -55,6 +55,12 @@ adjustable). The Y axis can show values as entered, relative to a reference grou
 data, e.g. physiology), or as fold change 2^-ΔΔCt (ΔCt data, qPCR).
 Statistics always use the values as entered.
 
+**Batch-adjusted values** (optional) subtract each batch's estimated shift
+from the plotted values, using the model's random-effect estimates (BLUPs).
+With the crossed model this removes run-wide (e.g. qPCR plate) shifts; with
+the nested model, each line's batch-to-batch deviation. This is for display
+only: statistics are unchanged, and adjusted values shouldn't be re-tested.
+
 A reference (control) group sets the comparison direction in tables and plots.
 Significance can be shown as p-values or stars (ns, *, **, ***, ****), and
 dots can be colored by Line or Batch.
@@ -101,6 +107,28 @@ by loading.io (MIT License, © 2017 loading.io).
 - Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
   using real-time quantitative PCR and the 2^-ΔΔCT method. *Methods*
   25(4):402–408.
+
+### Batch adjustment (plots)
+
+- Robinson GK (1991). That BLUP is a good thing: the estimation of random
+  effects. *Statistical Science* 6(1):15–32.
+- Ruijter JM, Thygesen HH, Schoneveld OJLM, Das AT, Berkhout B, Lamers WH
+  (2006). Factor correction as a tool to eliminate between-session variation
+  in replicate experiments: application to molecular biology and
+  retrovirology. *Retrovirology* 3:2.
+- Hellemans J, Mortier G, De Paepe A, Speleman F, Vandesompele J (2007).
+  qBase relative quantification framework and software for management and
+  automated analysis of real-time quantitative PCR data. *Genome Biology*
+  8(2):R19.
+- Ruijter JM, Ruiz Villalba A, Hellemans J, Untergasser A, van den Hoff MJB
+  (2015). Removal of between-run variation in a multi-plate qPCR experiment.
+  *Biomolecular Detection and Quantification* 5:10–14.
+- Johnson WE, Li C, Rabinovic A (2007). Adjusting batch effects in
+  microarray expression data using empirical Bayes methods. *Biostatistics*
+  8(1):118–127.
+- Ritchie ME, Phipson B, Wu D, Hu Y, Law CW, Shi W, Smyth GK (2015). limma
+  powers differential expression analyses for RNA-sequencing and microarray
+  studies. *Nucleic Acids Research* 43(7):e47.
 
 ### Software
 

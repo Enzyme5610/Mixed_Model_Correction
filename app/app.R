@@ -126,7 +126,17 @@ plot_defaults <- list(type = "dots", layout = "side", dots = TRUE, color_by = "l
                       labels = "p",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
                       err = "ci", dir = "both", caps = TRUE, center = "diamond",
-                      rot = "auto")
+                      rot = "auto", adj_batch = FALSE)
+
+# Each row's estimated batch shift from the model (0 if no batch term)
+batch_shift <- function(datos, res) {
+  re <- lme4::ranef(res$MM_Form)
+  key <- if ("Batch" %in% names(re)) list(re$Batch, as.character(datos$Batch))
+         else if ("Batch:Line" %in% names(re))
+           list(re[["Batch:Line"]], paste(datos$Batch, datos$Line, sep = ":"))
+  if (is.null(key)) return(NULL)
+  key[[1]][key[[2]], 1]
+}
 
 # Display values, center and error bars for one parameter
 plot_stats <- function(datos, res, opt) {
@@ -139,7 +149,9 @@ plot_stats <- function(datos, res, opt) {
   tf <- switch(scale, raw = identity,
                ratio = function(v) v / ref_mean,
                fc = function(v) 2^-(v - ref_mean))
-  y <- tf(datos[[res$var]])
+  raw <- datos[[res$var]]
+  shift <- if (opt$adj_batch) batch_shift(datos, res)
+  y <- tf(if (is.null(shift)) raw else raw - shift)  # display only
   g <- as.character(means$Tx)
   # Model-based (CI, SE) or raw (SEM, SD)
   if (opt$err %in% c("sem", "sd")) {
@@ -155,7 +167,13 @@ plot_stats <- function(datos, res, opt) {
   }
   if (opt$dir == "up") lo <- m
   list(ref = ref, ord = c(ref, setdiff(lev, ref)), scale = scale, y = y,
-       g = g, m = m, lo = lo, hi = hi)
+       g = g, m = m, lo = lo, hi = hi, adjusted = !is.null(shift))
+}
+
+model_note <- function(opt, adjusted) {
+  paste0("Linear mixed model, Kenward-Roger",
+         if (opt$adj_batch) if (adjusted) "; batch-adjusted values"
+                            else "; batch adjustment not possible (no batch term)")
 }
 
 scale_label <- function(st, raw, opt) {
@@ -228,12 +246,12 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
   if (k > 2) {
     title(main = res$label, line = 2.6)
-    mtext("Linear mixed model, Kenward-Roger", side = 3, line = 1.2, cex = 0.8 * par("cex"))
+    mtext(model_note(opt, st$adjusted), side = 3, line = 1.2, cex = 0.8 * par("cex"))
     mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
           side = 3, line = 0.3, cex = 0.8 * par("cex"))
   } else {
     title(main = res$label, line = 1.6)
-    mtext("Linear mixed model, Kenward-Roger", side = 3, line = 0.4, cex = 0.8 * par("cex"))
+    mtext(model_note(opt, st$adjusted), side = 3, line = 0.4, cex = 0.8 * par("cex"))
   }
 
   set.seed(1)
@@ -321,7 +339,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   x_labels(seq_len(n), labels, ang)
   if (sts[[1]]$scale != "raw") abline(h = 1, lty = 3, col = "grey60")
   title(main = paste(ord, collapse = " vs "), line = if (k > 2) 2.6 else 1.6)
-  mtext("Linear mixed model, Kenward-Roger", side = 3, line = if (k > 2) 1.2 else 0.4,
+  mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), side = 3, line = if (k > 2) 1.2 else 0.4,
         cex = 0.8 * par("cex"))
   if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
                    side = 3, line = 0.3, cex = 0.8 * par("cex"))
@@ -436,11 +454,12 @@ ui <- page_sidebar(
       tableOutput("pairs_table"),
       actionButton("dl_pairs", "Download pairwise (.csv)", icon = icon("download"))
     ),
-    nav_panel("Plots", div(  # plain div: no fill layout
-      layout_columns(
-        col_widths = c(4, 4, 4),
-        div(
-          radioButtons("fig", "Figure", choices = c(
+    nav_panel("Plots", layout_sidebar(
+      fillable = FALSE,
+      sidebar = sidebar(width = 290, accordion(
+        open = "Figure",
+        accordion_panel("Figure",
+          radioButtons("fig", NULL, choices = c(
             "One parameter" = "one", "All parameters in one figure" = "all")),
           conditionalPanel("input.fig == 'one'",
             selectInput("plot_param", "Parameter", choices = NULL)),
@@ -454,7 +473,12 @@ ui <- page_sidebar(
                          choices = c("Beside dots" = "side", "Over dots" = "overlay"))),
           conditionalPanel("input.type != 'dots'",
             checkboxInput("dots", "Show dots", TRUE)),
-          selectInput("err", "Error bars", choices = c(
+          checkboxInput("adj_batch", "Batch-adjusted values", FALSE),
+          conditionalPanel("input.adj_batch",
+            helpText("Dots minus each batch's estimated shift. Statistics are",
+                     "unchanged; don't re-test adjusted values."))),
+        accordion_panel("Error bars",
+          selectInput("err", NULL, choices = c(
             "95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd")),
           conditionalPanel("input.err == 'sem' || input.err == 'sd'",
             helpText("SEM and SD use the raw values and ignore Line and Batch.")),
@@ -463,30 +487,27 @@ ui <- page_sidebar(
           checkboxInput("caps", "Caps", TRUE),
           conditionalPanel("input.type != 'bar'",
             radioButtons("center", "Mean marker", inline = TRUE,
-                         choices = c("Diamond" = "diamond", "Line" = "line")))
-        ),
-        div(
+                         choices = c("Diamond" = "diamond", "Line" = "line")))),
+        accordion_panel("Axis & labels",
           selectInput("scale", "Y axis", choices = c(
             "Values as entered" = "raw",
             "Relative to reference (linear data)" = "ratio",
             "Fold change 2^-ΔΔCt (ΔCt data)" = "fc")),
           textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
-          selectInput("rot", "Label angle", choices = c(
-            "Auto" = "auto", "Horizontal" = "0", "45°" = "45", "Vertical" = "90")),
+          selectInput("rot", "X label angle", choices = c(
+            "Auto" = "auto", "Horizontal" = "0", "45°" = "45", "Vertical" = "90"))),
+        accordion_panel("Colors & significance",
           selectInput("color_by", "Color dots by", choices = c(
             "Line" = "line", "Batch" = "batch", "None" = "none")),
-          checkboxInput("brackets", "Show significance", TRUE),
-          radioButtons("labels", NULL, inline = TRUE,
-                       choices = c("p-values" = "p", "Stars (*, ns)" = "stars"))
-        ),
-        div(
           sliderInput("pt_size", "Dot size", min = 0.4, max = 2, value = 1, step = 0.1),
+          radioButtons("sig", "Significance", inline = TRUE,
+                       choices = c("p-values" = "p", "Stars" = "stars", "Hide" = "none"))),
+        accordion_panel("Size",
           numericInput("w", "Width (in)", value = 5, min = 3, max = 12, step = 0.5),
           checkboxInput("square", "Square", TRUE),
           conditionalPanel("!input.square",
-            numericInput("h", "Height (in)", value = 5, min = 3, max = 12, step = 0.5))
-        )
-      ),
+            numericInput("h", "Height (in)", value = 5, min = 3, max = 12, step = 0.5)))
+      )),
       plotOutput("plot", width = "auto", height = "auto", fill = FALSE),
       div(
         actionButton("dl_png", "PNG (this figure)", icon = icon("download")),
@@ -525,6 +546,13 @@ entered.
 
 **Error bars** can show the model's 95% CI or SE (matching the statistics),
 or the SEM or SD of the raw values (which ignore Line and Batch).
+
+**Batch-adjusted values** subtract each batch's estimated shift (the model's
+random-effect estimates) from the plotted values: run-wide shifts with the
+crossed model, each line's batch-to-batch deviation with the nested model.
+Display only; statistics are unchanged and adjusted values shouldn't be
+re-tested. Approach and references (e.g. Ruijter et al. 2006; Hellemans et
+al. 2007; Ritchie et al. 2015) are in the README.
 
 The **reference (control) group** sets the comparison direction in tables and
 plots (e.g. \"AD - Control\"); p-values are unaffected. Significance can be
@@ -646,10 +674,11 @@ server <- function(input, output, session) {
   })
 
   opt <- reactive(list(type = input$type, layout = input$layout, dots = input$dots,
-                       color_by = input$color_by, labels = input$labels, size = input$pt_size,
-                       brackets = input$brackets, scale = input$scale, ref = input$ref,
+                       color_by = input$color_by, labels = input$sig, size = input$pt_size,
+                       brackets = !identical(input$sig, "none"), scale = input$scale, ref = input$ref,
                        ylab = input$ylab, err = input$err, dir = input$dir,
-                       caps = input$caps, center = input$center, rot = input$rot))
+                       caps = input$caps, center = input$center, rot = input$rot,
+                       adj_batch = input$adj_batch))
 
   # Size in inches, clamped to 3-12
   dims <- reactive({
