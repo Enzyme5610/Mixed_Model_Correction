@@ -106,92 +106,57 @@ by loading.io (MIT License, © 2017 loading.io).
 
 ## References
 
-### Methods
-
 - Aarts E, Verhage M, Veenvliet JV, Dolan CV, van der Sluis S (2014). A
   solution to dependency: using multilevel analysis to accommodate nested
   data. *Nature Neuroscience* 17(4):491–496.
-- Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
-  restricted maximum likelihood. *Biometrics* 53(3):983–997.
-- Schielzeth H, Nakagawa S (2013). Nested by design: model fitting and
-  interpretation in a mixed model era. *Methods in Ecology and Evolution*
-  4(1):14–24.
-- Bolker B, et al. GLMM FAQ: Nested or crossed?
-  https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#nested-or-crossed
-- Tukey JW (1953). The problem of multiple comparisons. Unpublished
-  manuscript, reprinted in *The Collected Works of John W. Tukey*, Vol. VIII
-  (1994). Chapman & Hall.
-- Kramer CY (1956). Extension of multiple range tests to group means with
-  unequal numbers of replications. *Biometrics* 12(3):307–310.
+- Bates D, Mächler M, Bolker B, Walker S (2015). Fitting linear mixed-effects
+  models using lme4. *Journal of Statistical Software* 67(1):1–48.
 - Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a
   practical and powerful approach to multiple testing. *Journal of the Royal
   Statistical Society: Series B* 57(1):289–300.
-- Dunn OJ (1961). Multiple comparisons among means. *Journal of the American
-  Statistical Association* 56(293):52–64.
-- Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
-  using real-time quantitative PCR and the 2^-ΔΔCT method. *Methods*
-  25(4):402–408.
-
-### Log transformation
-
 - Bland JM, Altman DG (1996). Statistics notes: Transforming data. *BMJ*
   312(7033):770.
-- Keene ON (1995). The log transformation is special. *Statistics in
-  Medicine* 14(8):811–819.
-- Limpert E, Stahel WA, Abbt M (2001). Log-normal distributions across the
-  sciences: keys and clues. *BioScience* 51(5):341–352.
-- Buzsáki G, Mizuseki K (2014). The log-dynamic brain: how skewed
-  distributions affect network operations. *Nature Reviews Neuroscience*
-  15(4):264–278.
-
-### Batch adjustment (plots)
-
-- Robinson GK (1991). That BLUP is a good thing: the estimation of random
-  effects. *Statistical Science* 6(1):15–32.
-- Ruijter JM, Thygesen HH, Schoneveld OJLM, Das AT, Berkhout B, Lamers WH
-  (2006). Factor correction as a tool to eliminate between-session variation
-  in replicate experiments: application to molecular biology and
-  retrovirology. *Retrovirology* 3:2.
-- Hellemans J, Mortier G, De Paepe A, Speleman F, Vandesompele J (2007).
-  qBase relative quantification framework and software for management and
-  automated analysis of real-time quantitative PCR data. *Genome Biology*
-  8(2):R19.
-- Ruijter JM, Ruiz Villalba A, Hellemans J, Untergasser A, van den Hoff MJB
-  (2015). Removal of between-run variation in a multi-plate qPCR experiment.
-  *Biomolecular Detection and Quantification* 5:10–14.
-- Johnson WE, Li C, Rabinovic A (2007). Adjusting batch effects in
-  microarray expression data using empirical Bayes methods. *Biostatistics*
-  8(1):118–127.
-- Ritchie ME, Phipson B, Wu D, Hu Y, Law CW, Shi W, Smyth GK (2015). limma
-  powers differential expression analyses for RNA-sequencing and microarray
-  studies. *Nucleic Acids Research* 43(7):e47.
-
-### Software
-
-- R Core Team (2025). R: A language and environment for statistical
-  computing. R Foundation for Statistical Computing, Vienna, Austria.
-  https://www.R-project.org/
-- Bates D, Mächler M, Bolker B, Walker S (2015). Fitting linear mixed-effects
-  models using lme4. *Journal of Statistical Software* 67(1):1–48.
-- Kuznetsova A, Brockhoff PB, Christensen RHB (2017). lmerTest package: tests
-  in linear mixed effects models. *Journal of Statistical Software*
-  82(13):1–26.
+- Bolker B, et al. GLMM FAQ: Nested or crossed?
+  https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#nested-or-crossed
+- Chang W, Cheng J, Allaire JJ, Sievert C, Schloerke B, Aden-Buie G, Xie Y,
+  Allen J, McPherson J, Dipert A, Borges B (2026). shiny: Web application
+  framework for R. R package version 1.14.0. doi:10.32614/CRAN.package.shiny
+- Dunn OJ (1961). Multiple comparisons among means. *Journal of the American
+  Statistical Association* 56(293):52–64.
 - Halekoh U, Højsgaard S (2014). A Kenward-Roger approximation and parametric
   bootstrap methods for tests in linear mixed models – the R package
   pbkrtest. *Journal of Statistical Software* 59(9):1–32.
 - Johnson P (2026). devEMF: EMF graphics output device. R package version 4.6.
   doi:10.32614/CRAN.package.devEMF
+- Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
+  restricted maximum likelihood. *Biometrics* 53(3):983–997.
+- Kramer CY (1956). Extension of multiple range tests to group means with
+  unequal numbers of replications. *Biometrics* 12(3):307–310.
+- Kuznetsova A, Brockhoff PB, Christensen RHB (2017). lmerTest package: tests
+  in linear mixed effects models. *Journal of Statistical Software*
+  82(13):1–26.
 - Lenth R, Piaskowski J (2026). emmeans: Estimated marginal means, aka
   least-squares means. R package version 2.0.4.
   doi:10.32614/CRAN.package.emmeans
-- Chang W, Cheng J, Allaire JJ, Sievert C, Schloerke B, Aden-Buie G, Xie Y,
-  Allen J, McPherson J, Dipert A, Borges B (2026). shiny: Web application
-  framework for R. R package version 1.14.0. doi:10.32614/CRAN.package.shiny
-- Sievert C, Cheng J, Aden-Buie G (2026). bslib: Custom 'Bootstrap' 'Sass'
-  themes for 'shiny' and 'rmarkdown'. R package version 0.12.0.
-  doi:10.32614/CRAN.package.bslib
+- Livak KJ, Schmittgen TD (2001). Analysis of relative gene expression data
+  using real-time quantitative PCR and the 2^-ΔΔCT method. *Methods*
+  25(4):402–408.
+- R Core Team (2025). R: A language and environment for statistical
+  computing. R Foundation for Statistical Computing, Vienna, Austria.
+  https://www.R-project.org/
+- Robinson GK (1991). That BLUP is a good thing: the estimation of random
+  effects. *Statistical Science* 6(1):15–32.
+- Schielzeth H, Nakagawa S (2013). Nested by design: model fitting and
+  interpretation in a mixed model era. *Methods in Ecology and Evolution*
+  4(1):14–24.
 - Schloerke B, Chang W, Stagg G, Aden-Buie G (2026). shinylive: Run 'shiny'
   applications in the browser. R package version 0.5.0.
   doi:10.32614/CRAN.package.shinylive
+- Sievert C, Cheng J, Aden-Buie G (2026). bslib: Custom 'Bootstrap' 'Sass'
+  themes for 'shiny' and 'rmarkdown'. R package version 0.12.0.
+  doi:10.32614/CRAN.package.bslib
 - Stagg GW, Lionel H, et al. (2023). webR: The statistical language R
   compiled to WebAssembly via Emscripten. https://github.com/r-wasm/webr
+- Tukey JW (1953). The problem of multiple comparisons. Unpublished
+  manuscript, reprinted in *The Collected Works of John W. Tukey*, Vol. VIII
+  (1994). Chapman & Hall.
