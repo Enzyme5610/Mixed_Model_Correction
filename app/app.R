@@ -76,7 +76,6 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
     result_table <- as.data.frame(res$anova)
     res$table <- data.frame(
       Parameter = label,
-      Comparison = paste(levels(datos$Tx), collapse = " vs "),
       DF_method = "Kenward-Roger",
       result_table,
       row.names = NULL,
@@ -395,7 +394,6 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   }
 
   draw_err(xe, st, opt)
-  line_mark <- opt$type != "bar" && opt$center == "line"
 
   # Brackets; emmeans pair order matches combn on model levels
   prs <- combn(k, 2)
@@ -518,7 +516,6 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
               pt.bg = tint(cols, 0.5), col = cols, bty = "n", xpd = TRUE, cex = 0.85)
   ky <- g$rect$top - g$rect$h
   if (show_dots) ky <- dot_legend(lx, ky, cs, ss)
-  line_mark <- opt$type != "bar" && opt$center == "line"
   key <- type_key(opt)
   if (show_dots && opt$outliers && any(vapply(results, function(r) nrow(r$out) > 0, TRUE)))
     key <- rbind(key, outlier_row)
@@ -1012,7 +1009,7 @@ server <- function(input, output, session) {
   anova_df <- reactive({
     df <- do.call(rbind, lapply(results()$res, `[[`, "table"))
     ro <- ref_order()
-    df$Comparison <- paste(ro$ord, collapse = " vs ")
+    df <- cbind(df[1], Comparison = paste(ro$ord, collapse = " vs "), df[-1])
     # Benjamini-Hochberg across parameters in this run
     i <- match("Pr(>F)", names(df))
     df <- cbind(df[seq_len(i)], q_FDR = p.adjust(df[[i]], "BH"), df[-seq_len(i)])
