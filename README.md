@@ -34,14 +34,16 @@ AD,L5,B1,5.02,7.44
   across groups for the same line.
 - **Batch:** within a line, each separate run gets its own batch label. A
   line's first run is B1, its second B2. Different lines can all be B1.
-- **Crossed** (step 3): only when several lines shared a run (e.g. one qPCR
-  plate). The same batch label must then mean the same run for every line.
+- **Crossed** (step 3): only when several lines shared a run: one qPCR plate,
+  or several lines recorded the same day (ephys). Number the shared runs B1,
+  B2 (or use the plate ID or date); the same label must mean the same run for
+  every line.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
 ## Model
 
-`parameter ~ Tx + (1 | Line/Batch)` (nested, default), fit with
+`parameter ~ Tx + (1 | Line/Batch)` (nested), fit with
 `lmerTest::lmer`, with Tx tested by a Type II F test using Kenward-Roger
 degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
 Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
