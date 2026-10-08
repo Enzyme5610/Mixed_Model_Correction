@@ -91,6 +91,11 @@ Plots download as PNG, TIFF, JPEG, PDF, SVG or EMF. EMF is editable in PowerPoin
 **All parameters in one figure** shows the selected parameters side by side on
 one shared Y axis, with the groups next to each other for each parameter.
 
+**Split and combined** (Plots and Pairwise tabs): groups named like `Ctrl_M,
+Ctrl_F, KO_M, KO_F` are split at the last `_`. Ctrl vs KO is fit within each
+subset (M, F) and on all cells (Combined), each its own model. Every group
+needs every subset. Does not test whether subsets differ.
+
 ## Credits
 
 - Original R script: **Dr. Luis Gustavo Hernandez Carballo**

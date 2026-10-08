@@ -423,7 +423,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
 }
 
 # All parameters in one figure: parameters on x, groups side by side
-draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
+draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL) {
   opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
   n <- length(results)
   sts <- lapply(results, function(r) plot_stats(datos, r, opt))
@@ -453,10 +453,11 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
             mar = c(bottom_mar(labels, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, n + 0.5), ylim = c(rng[1] - 0.05 * h, top), xaxt = "n",
-       xlab = "", ylab = scale_label(sts[[1]], "Value", opt), las = 1)
+       xlab = "", ylab = scale_label(sts[[1]], if (is.null(main)) "Value" else main, opt), las = 1)
   x_labels(seq_len(n), labels, ang)
   if (sts[[1]]$scale != "raw") abline(h = 1, lty = 3, col = "grey60")
-  title(main = paste(ord, collapse = " vs "), line = if (k > 2) 2.6 else 1.6)
+  title(main = if (is.null(main)) paste(ord, collapse = " vs ") else main,
+        line = if (k > 2) 2.6 else 1.6)
   mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), side = 3, line = if (k > 2) 1.2 else 0.4,
         cex = 0.8 * par("cex"))
   if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
@@ -526,6 +527,26 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
     ky <- g$rect$top - g$rect$h
   }
   star_key(opt, lx, ky)
+}
+
+# Group name before the last _ (Ctrl_M, Ctrl_F -> Ctrl)
+pool_name <- function(x) sub("_[^_]*$", "", x)
+
+# One parameter as clusters by name suffix (M, F) plus Combined, each its own model
+split_prep <- function(p, var) {
+  tx <- as.character(p$datos$Tx)
+  part <- sub("^.*_", "", tx)
+  grp <- pool_name(tx)
+  ok <- all(grepl("_", tx)) && length(unique(part)) > 1 && length(unique(grp)) > 1 &&
+    all(table(grp, part) > 0)
+  validate(need(ok, "Split and combined needs every group named like Ctrl_M, Ctrl_F, KO_M, KO_F."))
+  d <- p$datos
+  d$Tx <- factor(grp, levels = unique(pool_name(levels(p$datos$Tx))))
+  parts <- unique(sub("^.*_", "", levels(p$datos$Tx)))
+  vars <- paste0(".split", seq_along(parts))
+  for (i in seq_along(parts)) d[[vars[i]]] <- ifelse(part == parts[i], d[[var]], NA)
+  d$.split_all <- d[[var]]
+  list(datos = d, MM_Vars = c(vars, ".split_all"), parameter_labels = c(parts, "Combined"))
 }
 
 # Batch labels used by more than one line (crossed needs one)
@@ -615,6 +636,10 @@ welcome_page <- function() {
       fb("Several lines, one batch each", tags$code("(1|Line)")),
       fb("One line, several batches", tagList(tags$code("(1|Batch)"), " (that line only)")),
       fb("One line, one batch", "Can't be tested")),
+    h5(class = "mt-4", "Split and combined"),
+    p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
+      "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own",
+      "model. Plots and Pairwise tabs. Does not test whether M and F differ."),
     h5(class = "mt-4", "Not covered"),
     tags$ul(class = "small",
       tags$li("Data: small counts, percentages near 0 or 100%, scores, omics, skewed data with zeros"),
@@ -756,6 +781,11 @@ ui <- page_sidebar(
     ),
     nav_panel("ANOVA output", verbatimTextOutput("anova_print")),
     nav_panel("Pairwise",
+      radioButtons("pairs_view", NULL, inline = TRUE, choices = c(
+        "Groups as entered" = "groups", "Split and combined" = "split")),
+      conditionalPanel("input.pairs_view == 'split'",
+        helpText("Ctrl_M and Ctrl_F: Ctrl in subsets M and F, plus Combined. Each subset",
+                 "is its own model.")),
       helpText("Fold-change columns (2^-estimate) appear when the plot Y axis is set",
                "to fold change (ΔCt data)."),
       tableOutput("pairs_table"),
@@ -767,9 +797,13 @@ ui <- page_sidebar(
         open = "1. What to plot",
         accordion_panel("1. What to plot",
           radioButtons("fig", NULL, choices = c(
-            "One parameter" = "one", "All parameters in one figure" = "all")),
-          conditionalPanel("input.fig == 'one'",
+            "One parameter" = "one", "All parameters in one figure" = "all",
+            "Split and combined" = "split")),
+          conditionalPanel("input.fig != 'all'",
             selectInput("plot_param", "Parameter", choices = NULL)),
+          conditionalPanel("input.fig == 'split'",
+            helpText("Ctrl_M and Ctrl_F: Ctrl in subsets M and F, plus Combined. Each",
+                     "subset is its own model; p-values in the Pairwise tab.")),
           conditionalPanel("input.fig == 'all'",
             selectizeInput("multi", "Parameters", choices = NULL, multiple = TRUE,
                            options = list(plugins = list("remove_button")))),
@@ -939,7 +973,7 @@ server <- function(input, output, session) {
                           function(n, label) incProgress(1 / n, detail = label),
                           design = input$design),
                error = function(e) validate(conditionMessage(e))))
-    list(res = res, prep = p, adjust = input$adjust,
+    list(res = res, prep = p, adjust = input$adjust, design = input$design,
          base = tools::file_path_sans_ext(input$file$name))
   })
 
@@ -1031,11 +1065,17 @@ server <- function(input, output, session) {
   })
 
   pairs_df <- reactive({
-    df <- do.call(rbind, lapply(results()$res, `[[`, "pairs_table"))
     ro <- ref_order()
-    prs <- combn(ro$lev, 2)  # emmeans pair order
+    lev <- ro$lev; ref <- ro$ref
+    if (identical(input$pairs_view, "split")) {
+      s <- split_all()
+      df <- do.call(rbind, Map(function(p, x) do.call(rbind, lapply(x$res, function(r)
+        cbind(Parameter = p, Subset = r$label, r$pairs_table[-1]))), names(s), s))
+      lev <- levels(s[[1]]$prep$datos$Tx); ref <- pool_name(ref)
+    } else df <- do.call(rbind, lapply(results()$res, `[[`, "pairs_table"))
+    prs <- combn(lev, 2)  # emmeans pair order
     i <- rep(seq_len(ncol(prs)), length.out = nrow(df))
-    flip <- prs[1, i] == ro$ref
+    flip <- prs[1, i] == ref
     a <- ifelse(flip, prs[2, i], prs[1, i]); b <- ifelse(flip, prs[1, i], prs[2, i])
     df$contrast <- paste(a, "-", b)
     df$estimate <- ifelse(flip, -df$estimate, df$estimate)
@@ -1135,12 +1175,32 @@ server <- function(input, output, session) {
     c(w = w, h = if (isTRUE(input$square)) w else fit(input$h))
   })
 
-  # Current figure: one parameter or all selected in one figure
+  # Split and combined: each parameter refit per subset; shared by figure and table
+  split_all <- reactive({
+    r <- results()
+    sps <- lapply(r$res, function(x) split_prep(r$prep, x$var))
+    labels <- vapply(r$res, `[[`, "", "label")
+    withProgress(message = "Fitting split models", value = 0,
+      setNames(Map(function(sp, lab) {
+        res <- tryCatch(run_models(sp, sp$MM_Vars, r$adjust, function(n, label)
+                          incProgress(1 / (n * length(sps)), detail = paste(lab, label)), r$design),
+                        error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
+        list(prep = sp, res = res)
+      }, sps, labels), labels))
+  })
+
+  # Current figure: one parameter, all selected in one figure, or split and combined
   draw_current <- function(r) {
     if (identical(input$fig, "all")) {
       sel <- r$res[vapply(r$res, `[[`, "", "label") %in% input$multi]
       validate(need(length(sel) > 0, "Select at least one parameter."))
       draw_multi(r$prep$datos, sel, r$adjust, opt())
+    } else if (identical(input$fig, "split")) {
+      s <- split_all()[[input$plot_param]]
+      o <- opt()
+      o$ref <- pool_name(o$ref)
+      o$order <- unique(pool_name(unlist(o$order)))
+      draw_multi(s$prep$datos, s$res, r$adjust, o, main = input$plot_param)
     } else draw_plot(r$prep$datos, current(), r$adjust, opt())
   }
 
@@ -1174,12 +1234,14 @@ server <- function(input, output, session) {
 
   observeEvent(input$dl_pairs, {
     r <- ready(); req(r)
-    save_file(paste0(r$base, "_MM_KR_pairwise.csv"), "text/csv",
+    split <- if (identical(input$pairs_view, "split")) "_split" else ""
+    save_file(paste0(r$base, "_MM_KR_pairwise", split, ".csv"), "text/csv",
               function(f) write.csv(pairs_df(), f, row.names = FALSE))
   })
 
   plot_name <- function(r, ext) {
-    what <- if (identical(input$fig, "all")) "all_parameters" else make.names(input$plot_param)
+    what <- switch(input$fig, all = "all_parameters",
+                   split = paste0(make.names(input$plot_param), "_split"), make.names(input$plot_param))
     paste0(r$base, "_", what, ".", ext)
   }
 
