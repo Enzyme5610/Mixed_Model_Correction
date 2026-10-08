@@ -39,7 +39,7 @@ random_term <- function(datos, design = "nested") {
 }
 
 run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
-                       design = "nested", log_vars = character()) {
+                       design = "nested") {
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
@@ -48,11 +48,9 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
     # Lines/Batches counted where this parameter was measured
-    rand <- random_term(droplevels(datos[!is.na(datos[[var]]), ]), design)
-    logged <- var %in% log_vars
-    if (logged && any(datos[[var]] <= 0, na.rm = TRUE))
-      stop("Log transform needs positive values: '", label, "'.", call. = FALSE)
-    f <- reformulate(c("Tx", rand), if (logged) str2lang(paste0("log10(", var, ")")) else var)
+    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design),
+                     error = function(e) stop("'", label, "': ", conditionMessage(e), call. = FALSE))
+    f <- reformulate(c("Tx", rand), var)
     warn <- character()
     res <- withCallingHandlers(
       tryCatch({
@@ -75,7 +73,6 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
       Parameter = label,
       Comparison = paste(levels(datos$Tx), collapse = " vs "),
       DF_method = "Kenward-Roger",
-      Transform = if (logged) "log10" else "none",
       result_table,
       row.names = NULL,
       check.names = FALSE
@@ -84,15 +81,17 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
       Parameter = label,
       res$pairs,
       DF_method = "Kenward-Roger",
-      Transform = if (logged) "log10" else "none",
       P_adjust = adjust_label(adjust, nlevels(datos$Tx)),
       check.names = FALSE
     )
     res$var <- var
     res$label <- label
     res$rand <- rand
-    res$log <- logged
     res$warnings <- unique(warn)
+    # Possible outliers: scaled model residual beyond 3
+    r <- residuals(res$MM_Form, type = "pearson", scaled = TRUE)
+    res$out <- data.frame(i = match(names(r), rownames(datos)), resid = unname(r))
+    res$out <- res$out[abs(res$out$resid) > 3, ]
     out[[i]] <- res
   }
   out
@@ -189,8 +188,8 @@ plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "li
                       shape_by = "none", cols = list(), shapes = list(), order = NULL,
                       labels = "stars",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
-                      err = "sem", dir = "up", caps = TRUE, center = "diamond",
-                      rot = "auto", adj_batch = FALSE)
+                      err = "sem", center = "diamond",
+                      rot = "auto", adj_batch = FALSE, outliers = TRUE)
 
 # Each row's estimated batch shift from the model (0 if no batch term)
 batch_shift <- function(datos, res) {
@@ -208,23 +207,23 @@ plot_stats <- function(datos, res, opt) {
   means <- res$means
   ref <- if (isTRUE(opt$ref %in% lev)) opt$ref else lev[1]  # plotted first
   ref_mean <- means$emmean[as.character(means$Tx) == ref]
-  lg <- isTRUE(res$log)
   # Ratios need positive values; otherwise direction can flip (e.g. negative dCt)
-  ratio_ok <- lg || ref_mean > 0 && all(datos[[res$var]] > 0, na.rm = TRUE)
-  scale <- if (opt$scale == "ratio" && !ratio_ok || lg && opt$scale == "fc") "raw" else opt$scale
-  # Display scale; stats stay on entered values. Log parameters stay in log10 units
+  ratio_ok <- ref_mean > 0 && all(datos[[res$var]] > 0, na.rm = TRUE)
+  scale <- if (opt$scale == "ratio" && !ratio_ok) "raw" else opt$scale
+  # Display scale; stats stay on entered values
   tf <- switch(scale, raw = identity,
-               ratio = if (lg) function(v) v - ref_mean else function(v) v / ref_mean,
+               ratio = function(v) v / ref_mean,
                fc = function(v) 2^-(v - ref_mean))
-  raw <- if (lg) log10(datos[[res$var]]) else datos[[res$var]]
+  raw <- datos[[res$var]]
   shift <- if (opt$adj_batch) batch_shift(datos, res)
   y <- tf(if (is.null(shift)) raw else raw - shift)  # display only
   g <- as.character(means$Tx)
   # Model-based (CI, SE) or raw (SEM, SD)
-  if (opt$err %in% c("sem", "sd")) {
+  if (opt$err %in% c("sem", "sd", "none")) {
     m <- tapply(y, datos$Tx, mean, na.rm = TRUE)[g]
     s <- tapply(y, datos$Tx, sd, na.rm = TRUE)[g]
     if (opt$err == "sem") s <- s / sqrt(tapply(!is.na(y), datos$Tx, sum)[g])
+    if (opt$err == "none") s <- 0
     lo <- m - s; hi <- m + s
   } else {
     m <- tf(means$emmean)
@@ -232,38 +231,35 @@ plot_stats <- function(datos, res, opt) {
     b <- if (opt$err == "se") means$emmean + means$SE else means$upper.CL
     lo <- pmin(tf(a), tf(b)); hi <- pmax(tf(a), tf(b))
   }
-  if (opt$dir == "up") lo <- m
-  list(ref = ref, ord = tx_order(datos, opt), scale = scale, y = y, log = lg,
+  if (opt$type == "bar") lo <- m  # bars: error bar above only
+  list(ref = ref, ord = tx_order(datos, opt), scale = scale, y = y,
        g = g, m = m, lo = lo, hi = hi, adjusted = !is.null(shift))
 }
 
-model_note <- function(opt, adjusted, lg = FALSE) {
-  paste0("Linear mixed model, Kenward-Roger", if (lg) "; log10 values",
+model_note <- function(opt, adjusted) {
+  paste0("Linear mixed model, Kenward-Roger",
          if (opt$adj_batch) if (adjusted) "; batch-adjusted values"
                             else "; batch adjustment not possible (no batch term)")
 }
 
 scale_note <- function(opt, scale) {
-  if (opt$scale != "raw" && scale == "raw") {
-    mtext(if (opt$scale == "fc") "Fold change is for ΔCt; log-transformed values shown as entered"
-          else "Relative scale needs positive values; showing values as entered (use fold change for ΔCt)",
+  if (opt$scale == "ratio" && scale == "raw") {
+    mtext("Relative scale needs positive values; showing values as entered (use fold change for ΔCt)",
           side = 1, line = par("mar")[1] - 1, adj = 0, cex = 0.6 * par("cex"))
   }
 }
 
 scale_label <- function(st, raw, opt) {
   if (nzchar(trimws(opt$ylab))) return(opt$ylab)  # user label wins
-  if (st$log) raw <- paste(raw, "(log scale)")
   switch(st$scale, raw = raw,
          ratio = paste("Relative to", st$ref),
          fc = bquote("Fold change vs" ~ .(st$ref) ~ (2^{-Delta*Delta*Ct})))
 }
 
 draw_err <- function(xe, st, opt, half = 0.15) {
-  if (opt$caps) {
-    suppressWarnings(arrows(xe, st$lo, xe, st$hi, angle = 90, length = 0.05, lwd = 2,
-                            code = if (opt$dir == "up") 2 else 3))
-  } else segments(xe, st$lo, xe, st$hi, lwd = 2)
+  if (opt$err == "none") return()
+  suppressWarnings(arrows(xe, st$lo, xe, st$hi, angle = 90, length = 0.05, lwd = 2,
+                          code = if (opt$type == "bar") 2 else 3))
   if (opt$type == "bar") return()
   if (opt$center == "line") segments(xe - half, st$m, xe + half, st$m, lwd = 3)
   else points(xe, st$m, pch = 23, bg = "white", cex = 1.4, lwd = 2)
@@ -277,13 +273,6 @@ label_angle <- function(labels, opt) {
   slot <- (dev.size("in")[1] - 12 * par("cin")[2] * cex) / length(labels)
   if (max(nchar(labels)) * 0.75 * par("cin")[1] * cex > 0.9 * slot) 90 else 0
 }
-# Y axis in original units for log10 coordinates
-y_axis <- function(lg) {
-  if (!lg) return(axis(2, las = 1))
-  at <- axisTicks(par("usr")[3:4], log = TRUE)
-  axis(2, at = log10(at), labels = format(at, drop0trailing = TRUE, trim = TRUE), las = 1)
-}
-
 bottom_mar <- function(labels, angle) {
   if (angle == 0) 3 else 1.5 + max(nchar(labels)) * if (angle == 90) 0.65 else 0.5
 }
@@ -295,9 +284,32 @@ x_labels <- function(at, labels, angle) {
   } else axis(1, at = at, labels = labels, las = if (angle == 90) 2 else 1)
 }
 
+# Red ring around flagged cells
+ring_outliers <- function(x, y, idx, opt) {
+  if (opt$outliers && length(idx)) points(x[idx], y[idx], pch = 1, cex = opt$size * 2,
+                                          col = "red", lwd = 1.5)
+}
+outlier_row <- data.frame(lab = "Possible outlier", pch = 1, lty = NA, bg = NA, col = "red")
+
+# Legend rows for the summary marks: box = box, line = line
+type_key <- function(opt) {
+  row <- function(lab, pch = NA, lty = NA, bg = NA, col = "black")
+    data.frame(lab = lab, pch = pch, lty = lty, bg = bg, col = col)
+  line_mark <- opt$center == "line"
+  err <- opt$err != "none"
+  mean_row <- if (err) row(err_label(opt), pch = if (line_mark) NA else 23,
+                           lty = if (line_mark) 1 else NA, bg = "white")
+  switch(opt$type,
+    bar = rbind(row(if (opt$err %in% c("ci", "se")) "Model mean" else "Mean", pch = 22, bg = "grey88"),
+                if (err) row(sub("^.*(±)", "\\1", err_label(opt)), lty = 1)),
+    box = rbind(row("Median", lty = 1, col = "grey30"), row("IQR", pch = 22, bg = "grey88", col = "grey30"), mean_row),
+    violin = rbind(row("Distribution", pch = 22, bg = "grey92", col = "grey45"), mean_row),
+    mean_row)
+}
+
 err_label <- function(opt) {
   switch(opt$err, ci = "Model mean\n± 95% CI", se = "Model mean\n± SE",
-         sem = "Mean ± SEM", sd = "Mean ± SD")
+         sem = "Mean ± SEM", sd = "Mean ± SD", none = "Mean")
 }
 
 draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
@@ -318,7 +330,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   ylab <- scale_label(st, res$label, opt)
   y <- st$y; m <- st$m; lo <- st$lo; hi <- st$hi
 
-  rng <- range(c(y, lo, hi, if (opt$type == "bar" && !st$log) 0), na.rm = TRUE)
+  rng <- range(c(y, lo, hi, if (opt$type == "bar") 0), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
   n_pairs <- if (opt$brackets) nrow(pw) else 0
@@ -330,27 +342,26 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
             mar = c(bottom_mar(ord, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, k + 0.5), ylim = c(rng[1] - 0.05 * h, top),
-       xaxt = "n", yaxt = "n", xlab = "", ylab = ylab)
-  y_axis(st$log)
+       xaxt = "n", xlab = "", ylab = ylab, las = 1)
   x_labels(seq_len(k), ord, ang)
-  if (scale != "raw") abline(h = if (st$log) 0 else 1, lty = 3, col = "grey60")
+  if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
   if (k > 2) {
     title(main = res$label, line = 2.6)
-    mtext(model_note(opt, st$adjusted, st$log), side = 3, line = 1.2, cex = 0.8 * par("cex"))
+    mtext(model_note(opt, st$adjusted), side = 3, line = 1.2, cex = 0.8 * par("cex"))
     mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
           side = 3, line = 0.3, cex = 0.8 * par("cex"))
   } else {
     title(main = res$label, line = 1.6)
-    mtext(model_note(opt, st$adjusted, st$log), side = 3, line = 0.4, cex = 0.8 * par("cex"))
+    mtext(model_note(opt, st$adjusted), side = 3, line = 0.4, cex = 0.8 * par("cex"))
   }
 
   set.seed(1)
   side <- opt$type == "dots" && opt$layout == "side"
   xj <- xs + if (side) -0.12 + runif(length(y), -0.08, 0.08) else runif(length(y), -0.15, 0.15)
-  xe <- xm + if (side) 0.15 else 0
+  xe <- xm + if (side) 0.15 else if (opt$type == "box") 0.3 else 0  # box: mean beside
 
   if (opt$type == "bar") {
-    rect(xm - 0.3, if (st$log) par("usr")[3] else 0, xm + 0.3, m, border = "grey30",
+    rect(xm - 0.3, 0, xm + 0.3, m, border = "grey30",
          col = tint(gs$val[match(st$g, gs$lev)], 0.3))
   }
   if (opt$type == "violin") {
@@ -363,6 +374,11 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
               col = tint(gs$val[match(ord[g], gs$lev)], 0.2))
     }
   }
+  if (opt$type == "box") {
+    boxplot(split(y, factor(xs, levels = seq_len(k))), at = seq_len(k), add = TRUE,
+            axes = FALSE, outline = FALSE, boxwex = 0.4, border = "grey30",
+            col = tint(gs$val[match(ord, gs$lev)], 0.3))
+  }
 
   # Samples
   show_dots <- opt$type == "dots" || opt$dots
@@ -370,6 +386,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
     col <- if (is.null(cs)) "grey45" else cs$val[cs$idx]
     points(xj, y, pch = if (is.null(ss)) 19 else ss$val[ss$idx], cex = opt$size,
            col = tint(col, 0.75))
+    ring_outliers(xj, y, res$out$i, opt)
   }
 
   draw_err(xe, st, opt)
@@ -390,15 +407,16 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
   ky <- if (show_dots) dot_legend(lx, usr[4], cs, ss) else usr[4]
-  key <- data.frame(lab = err_label(opt), pch = if (opt$type == "bar") 22 else if (line_mark) NA else 23,
-                    bg = if (opt$type == "bar") "grey88" else "white", col = "black",
-                    lty = if (line_mark) 1 else NA)
-  if (opt$type == "violin") key <- rbind(data.frame(lab = "Distribution", pch = 22, bg = "grey92", col = "grey45", lty = NA), key)
-  if (show_dots) key <- rbind(data.frame(lab = "Sample", pch = 19, bg = NA, col = "grey40", lty = NA), key)
-  g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty,
-              lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
-              cex = 0.8, y.intersp = 1.4)
-  star_key(opt, lx, g$rect$top - g$rect$h)
+  key <- type_key(opt)
+  if (show_dots) key <- rbind(data.frame(lab = "Sample", pch = 19, lty = NA, bg = NA, col = "grey40"), key)
+  if (show_dots && opt$outliers && nrow(res$out)) key <- rbind(key, outlier_row)
+  if (NROW(key)) {
+    g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty,
+                lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
+                cex = 0.8, y.intersp = 1.4)
+    ky <- g$rect$top - g$rect$h
+  }
+  star_key(opt, lx, ky)
 }
 
 # All parameters in one figure: parameters on x, groups side by side
@@ -410,9 +428,6 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   if (opt$scale == "ratio" && any(vapply(sts, function(s) s$scale == "raw", TRUE)))
     sts <- lapply(results, function(r) plot_stats(datos, r, modifyList(opt, list(scale = "raw"))))
   ord <- sts[[1]]$ord
-  lg <- sts[[1]]$log
-  if (any(vapply(sts, `[[`, TRUE, "log") != lg))
-    stop("Log-transformed and untransformed parameters can't share one axis.", call. = FALSE)
   k <- length(ord)
   w <- 0.8 / k
   off <- (seq_len(k) - (k + 1) / 2) * w
@@ -424,7 +439,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   labels <- vapply(results, `[[`, "", "label")
 
   all_v <- unlist(lapply(sts, function(s) c(s$y, s$lo, s$hi)))
-  rng <- range(c(all_v, if (opt$type == "bar" && !lg) 0), na.rm = TRUE)
+  rng <- range(c(all_v, if (opt$type == "bar") 0), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
   n_pairs <- if (opt$brackets) nrow(results[[1]]$pairs) else 0
@@ -435,12 +450,11 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
             mar = c(bottom_mar(labels, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
   on.exit(par(op))
   plot(NA, xlim = c(0.5, n + 0.5), ylim = c(rng[1] - 0.05 * h, top), xaxt = "n",
-       yaxt = "n", xlab = "", ylab = scale_label(sts[[1]], "Value", opt))
-  y_axis(lg)
+       xlab = "", ylab = scale_label(sts[[1]], "Value", opt), las = 1)
   x_labels(seq_len(n), labels, ang)
-  if (sts[[1]]$scale != "raw") abline(h = if (lg) 0 else 1, lty = 3, col = "grey60")
+  if (sts[[1]]$scale != "raw") abline(h = 1, lty = 3, col = "grey60")
   title(main = paste(ord, collapse = " vs "), line = if (k > 2) 2.6 else 1.6)
-  mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted")), lg), side = 3, line = if (k > 2) 1.2 else 0.4,
+  mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), side = 3, line = if (k > 2) 1.2 else 0.4,
         cex = 0.8 * par("cex"))
   if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
                    side = 3, line = 0.3, cex = 0.8 * par("cex"))
@@ -452,7 +466,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
     xm <- i + off[match(st$g, ord)]
     xs <- i + off[gi]
     if (opt$type == "bar") {
-      rect(xm - w * 0.4, if (lg) par("usr")[3] else 0, xm + w * 0.4, st$m, border = "grey30",
+      rect(xm - w * 0.4, 0, xm + w * 0.4, st$m, border = "grey30",
            col = tint(cols[match(st$g, ord)], 0.3))
     }
     if (opt$type == "violin") {
@@ -466,13 +480,19 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
                 col = tint(cols[j], 0.2))
       }
     }
+    if (opt$type == "box") {
+      boxplot(split(st$y, factor(gi, levels = seq_len(k))), at = i + off, add = TRUE,
+              axes = FALSE, outline = FALSE, boxwex = w * 0.5, border = "grey30",
+              col = tint(cols, 0.3))
+    }
     if (show_dots) {
       col <- if (opt$color_by == "group") cols[gi] else if (is.null(cs)) "grey45" else cs$val[cs$idx]
-      points(xs + runif(length(xs), -w * 0.25, w * 0.25), st$y,
-             pch = if (is.null(ss)) 19 else ss$val[ss$idx],
+      xd <- xs + runif(length(xs), -w * 0.25, w * 0.25)
+      points(xd, st$y, pch = if (is.null(ss)) 19 else ss$val[ss$idx],
              cex = opt$size, col = tint(col, 0.75))
+      ring_outliers(xd, st$y, results[[i]]$out$i, opt)
     }
-    draw_err(xm, st, opt, half = w * 0.3)
+    draw_err(xm + if (opt$type == "box") w * 0.35 else 0, st, opt, half = w * 0.3)
 
     # Brackets at one shared height; emmeans pair order matches combn on model levels
     pw <- results[[i]]$pairs
@@ -494,11 +514,52 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   ky <- g$rect$top - g$rect$h
   if (show_dots) ky <- dot_legend(lx, ky, cs, ss)
   line_mark <- opt$type != "bar" && opt$center == "line"
-  g <- legend(lx, ky, legend = err_label(opt),
-              pch = if (opt$type == "bar") NA else if (line_mark) NA else 23,
-              lty = if (line_mark || opt$type == "bar") 1 else NA, lwd = 2, pt.bg = "white",
-              bty = "n", xpd = TRUE, cex = 0.8)
-  star_key(opt, lx, g$rect$top - g$rect$h)
+  key <- type_key(opt)
+  if (show_dots && opt$outliers && any(vapply(results, function(r) nrow(r$out) > 0, TRUE)))
+    key <- rbind(key, outlier_row)
+  if (NROW(key)) {
+    g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty, lwd = 3,
+                col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
+                cex = 0.8, y.intersp = 1.4)
+    ky <- g$rect$top - g$rect$h
+  }
+  star_key(opt, lx, ky)
+}
+
+# Batch labels used by more than one line (step 3 only matters then)
+shared_batches <- function(d) {
+  if (nlevels(d$Line) < 2 || nlevels(d$Batch) < 2) return(list())
+  Filter(function(x) length(x) > 1, lapply(split(as.character(d$Line), d$Batch), unique))
+}
+
+# Rows per Line x Batch, split by Tx
+design_table <- function(d) {
+  n <- table(d$Line, d$Batch, d$Tx)
+  cell <- apply(n, 1:2, function(x) paste(paste(names(x)[x > 0], x[x > 0]), collapse = ", "))
+  data.frame(Line = rownames(cell), cell, check.names = FALSE, row.names = NULL)
+}
+
+# Where each parameter was measured
+coverage <- function(p, vars) {
+  do.call(rbind, lapply(vars, function(v) {
+    s <- droplevels(p$datos[!is.na(p$datos[[v]]), ])
+    data.frame(Parameter = p$parameter_labels[match(v, p$MM_Vars)], n = nrow(s),
+               Lines = paste(levels(s$Line), collapse = ", "),
+               Batches = paste(levels(s$Batch), collapse = ", "),
+               Testable = nlevels(s$Line) > 1 || nlevels(s$Batch) > 1, check.names = FALSE)
+  }))
+}
+
+# Step 3 mini spreadsheet; color = one batch
+batch_sheet <- function(rows, caption, formula) {
+  cols <- c(g = "#0F6E56", p = "#534AB7", o = "#D85A30", b = "#185FA5")
+  tagList(
+    tags$table(class = "mmc-sheet",
+      tags$tr(tags$th("Tx"), tags$th("Line"), tags$th("Batch")),
+      lapply(rows, function(r) tags$tr(style = paste0("background:", cols[[r[4]]]),
+        tags$td(r[1]), tags$td(r[2]), tags$td(r[3])))),
+    tags$small(class = "text-muted d-block", caption),
+    tags$small(class = "text-muted font-monospace d-block", formula))
 }
 
 # Plot download formats (raster at 300 dpi)
@@ -579,7 +640,11 @@ ui <- page_sidebar(
         if (b.dataset.dir === 'down' && li.nextElementSibling) ul.insertBefore(li.nextElementSibling, li);
         sendOrder(ul);
       });")),
-    tags$style(".mmc-order li { cursor: grab; touch-action: none; } .mmc-pick[type=color] { width: 2em; height: 1.6em; padding: 0; border: 0; }"),
+    tags$style(".mmc-order li { cursor: grab; touch-action: none; } .mmc-pick[type=color] { width: 2em; height: 1.6em; padding: 0; border: 0; }
+      .mmc-sheet { border-collapse: collapse; table-layout: fixed; width: 100%; margin: 4px 0 2px; font: .75rem monospace; }
+      .mmc-sheet th { background: #f1f1f1; color: #555; border: 1px solid #ccc; padding: 1px 6px; font-weight: 400; }
+      .mmc-sheet td { color: #fff; font-weight: 600; border: 1px solid #fff; padding: 1px 6px; }
+      #design .radio { margin-bottom: .6rem; }"),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
     helpText("Needs columns named Tx, Line and Batch (exact spelling), in any position."),
     actionLink("example", "Download an example file"),
@@ -587,20 +652,23 @@ ui <- page_sidebar(
     selectizeInput("params", "2. Parameters to analyze", choices = NULL,
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
     helpText("Numeric columns are preselected."),
-    selectizeInput("log_params", "Log-transform (optional)", choices = NULL,
-                   multiple = TRUE, options = list(plugins = list("remove_button"))),
-    helpText("Log10 transformation for data skewed toward high values (a few much",
-             "higher than the rest). No 0 or negative values."),
+    uiOutput("param_warning"),
     hr(),
-    radioButtons("design", "3. Did different lines share a batch?",
-      choiceNames = list(
-        tagList("No, each line had its own batches", br(),
-                tags$small(class = "text-muted", "e.g. L1_B1, L1_B2, L2_B1"), br(),
-                tags$small(class = "text-muted font-monospace", "(1|Line/Batch)")),
-        tagList("Yes, lines were run side by side", br(),
-                tags$small(class = "text-muted", "e.g. L1 and L3 both in B1"), br(),
-                tags$small(class = "text-muted font-monospace", "(1|Line) + (1|Batch)"))),
-      choiceValues = c("nested", "crossed")),
+    strong("3. Batches"),
+    uiOutput("design_note"),
+    conditionalPanel("output.design_needed",
+      radioButtons("design", "Was it the same batch for these lines?",
+        choiceNames = list(
+          tagList("No, each line had its own", batch_sheet(list(
+            c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
+            c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b")),
+            "Same label, different batches.", "(1|Line/Batch)")),
+          tagList("Yes, one shared batch", batch_sheet(list(
+            c("Control", "L1", "B1", "g"), c("AD", "L3", "B1", "g"),
+            c("Control", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
+            "One batch, several lines.", "(1|Line) + (1|Batch)"))),
+        choiceValues = c("nested", "crossed")),
+      helpText("Color = one batch.")),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
@@ -618,7 +686,11 @@ ui <- page_sidebar(
       helpText("Fold-change columns appear when the plot Y axis is set to fold change",
                "(ΔCt data); confidence intervals are in the Pairwise tab."),
       tableOutput("anova_table"),
-      actionButton("dl_anova", "Download results (.csv)", icon = icon("download"))
+      actionButton("dl_anova", "Download results (.csv)", icon = icon("download")),
+      h6(class = "mt-4", "Possible outliers"),
+      helpText("Cells more than 3 SD from the model's prediction for their group, line and",
+               "batch. Nothing is removed; check these cells and edit the CSV if needed."),
+      tableOutput("outlier_table")
     ),
     nav_panel("ANOVA output", verbatimTextOutput("anova_print")),
     nav_panel("Pairwise",
@@ -640,12 +712,14 @@ ui <- page_sidebar(
             selectizeInput("multi", "Parameters", choices = NULL, multiple = TRUE,
                            options = list(plugins = list("remove_button")))),
           radioButtons("type", "Plot type", inline = TRUE, selected = "bar",
-                       choices = c("Dots" = "dots", "Bar" = "bar", "Violin" = "violin")),
+                       choices = c("Dots" = "dots", "Bar" = "bar", "Box" = "box",
+                                   "Violin" = "violin")),
           conditionalPanel("input.type == 'dots'",
             radioButtons("layout", "Mean and error bar", inline = TRUE,
                          choices = c("Beside dots" = "side", "Over dots" = "overlay"))),
           conditionalPanel("input.type != 'dots'",
             checkboxInput("dots", "Show dots", TRUE)),
+          checkboxInput("outliers", "Circle possible outliers", TRUE),
           checkboxInput("adj_batch", "Batch-adjusted values", FALSE),
           conditionalPanel("input.adj_batch",
             helpText("Dots minus each batch's estimated shift. Statistics are",
@@ -663,13 +737,11 @@ ui <- page_sidebar(
           sliderInput("pt_size", "Dot size", min = 0.4, max = 2, value = 1, step = 0.1)),
         accordion_panel("4. Mean & error bars",
           selectInput("err", "Error bars", selected = "sem", choices = c(
-            "95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd")),
+            "95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd",
+            "None" = "none")),
           conditionalPanel("input.err == 'sem' || input.err == 'sd'",
             helpText("SEM and SD use the raw values and ignore Line and Batch.")),
-          radioButtons("dir", NULL, inline = TRUE, selected = "up",
-                       choices = c("Both directions" = "both", "Above only" = "up")),
-          checkboxInput("caps", "Caps", TRUE),
-          conditionalPanel("input.type != 'bar'",
+          conditionalPanel("input.type != 'bar' && input.err != 'none'",
             radioButtons("center", "Mean marker", inline = TRUE,
                          choices = c("Diamond" = "diamond", "Line" = "line")))),
         accordion_panel("5. Axes & significance",
@@ -699,16 +771,17 @@ ui <- page_sidebar(
           dl_item(f, plot_formats[[f]]$label)
         })))
     )),
-    nav_panel("Data preview", tableOutput("preview")),
+    nav_panel("Data preview",
+      h6("Design: rows per line and batch"), tableOutput("design_tbl"),
+      h6("Where each parameter was measured"), tableOutput("coverage_tbl"),
+      h6("First 50 rows"), tableOutput("preview")),
     nav_panel("About",
       markdown("
 **Model.** Each parameter: `parameter ~ Tx + (1 | Line/Batch)`, fit with
 `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
-If lines shared batches (step 3 \"Yes\"): `(1 | Line) + (1 | Batch)`.
+If lines were run together (step 3 \"Yes\"): `(1 | Line) + (1 | Batch)`.
 One Line: `(1 | Batch)`. One Batch, or no replicates per line and batch:
 `(1 | Line)`.
-Log-transformed parameters are fit on log10 values; pairwise ratios are
-10^estimate.
 
 **FDR.** q-values (Benjamini-Hochberg) for panels of many similar
 parameters (e.g. gene panels). Adjusts Tx p-values across all parameters in
@@ -757,13 +830,60 @@ server <- function(input, output, session) {
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
 
-  # Log choices follow the selected parameters
-  observeEvent(input$params, {
+  # Box plots default to no mean/error bar; restore SEM when leaving box
+  prev_type <- reactiveVal("bar")
+  observeEvent(input$type, {
+    if (input$type == "box") updateSelectInput(session, "err", selected = "none")
+    else if (prev_type() == "box" && identical(input$err, "none"))
+      updateSelectInput(session, "err", selected = "sem")
+    prev_type(input$type)
+  }, ignoreInit = TRUE)
+
+  # Step 3 shows only when a batch label is shared by lines
+  design_needed <- reactive(length(shared_batches(prep()$datos)) > 0)
+  output$design_needed <- reactive(isTRUE(tryCatch(design_needed(), error = function(e) FALSE)))
+  outputOptions(output, "design_needed", suspendWhenHidden = FALSE)
+
+  output$design_note <- renderUI({
+    if (is.null(input$file)) return(helpText("Upload data to check."))
+    p <- prep(); d <- p$datos
+    sh <- shared_batches(d)
+    note <- function(...) div(class = "alert alert-info small py-1 px-2 mb-2", ...)
+    if (!length(sh)) {
+      f <- tryCatch(random_term(d), error = function(e) NULL)
+      return(note(sprintf("Detected %d line(s), %d batch(es): ", nlevels(d$Line), nlevels(d$Batch)),
+        if (is.null(f)) "can't be tested." else tags$code(f),
+        if (nlevels(d$Line) == 1) " Results apply to this line only."))
+    }
+    b <- names(sh)[1]
+    m <- paste0(b, " appears in ", paste(sh[[1]], collapse = ", "), ".")
+    # A date column can tell shared batches apart
+    dc <- p$MM_Vars[grepl("date", p$parameter_labels, ignore.case = TRUE)][1]
+    if (!is.na(dc)) {
+      split_b <- any(vapply(names(sh), function(x)
+        length(unique(na.omit(d[[dc]][d$Batch == x]))) > 1, TRUE))
+      m <- paste0(m, " Your '", p$parameter_labels[match(dc, p$MM_Vars)],
+                  "' column suggests ", if (split_b) "No." else "Yes.")
+    }
+    note(m)
+  })
+
+  output$param_warning <- renderUI({
+    req(input$params)
+    cv <- coverage(prep(), input$params)
+    bad <- cv$Parameter[!cv$Testable]
+    if (length(bad)) div(class = "alert alert-warning small py-1 px-2",
+      paste0("One line and one batch only, can't be tested: ", paste(bad, collapse = ", "),
+             ". Unselect them."))
+  })
+
+  output$design_tbl <- renderTable(design_table(prep()$datos))
+  output$coverage_tbl <- renderTable({
     p <- prep()
-    sel <- intersect(input$log_params, input$params)
-    updateSelectizeInput(session, "log_params", selected = sel,
-      choices = setNames(input$params, p$parameter_labels[match(input$params, p$MM_Vars)]))
-  }, ignoreNULL = FALSE)
+    cv <- coverage(p, p$MM_Vars[p$numeric])
+    cv$Testable <- ifelse(cv$Testable, "yes", "no")
+    cv
+  })
 
   results <- eventReactive(input$run, {
     p <- prep()
@@ -771,7 +891,7 @@ server <- function(input, output, session) {
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, input$adjust,
                           function(n, label) incProgress(1 / n, detail = label),
-                          design = input$design, log_vars = input$log_params),
+                          design = if (design_needed()) input$design else "nested"),
                error = function(e) validate(conditionMessage(e))))
     list(res = res, prep = p, adjust = input$adjust,
          base = tools::file_path_sans_ext(input$file$name))
@@ -851,10 +971,15 @@ server <- function(input, output, session) {
       for (g in setdiff(ro$ord, ro$ref)) {
         df[[paste("FC", g, "vs", ro$ref)]] <- vapply(results()$res, function(r) {
           m <- setNames(r$means$emmean, r$means$Tx)
-          if (r$log) NA_real_ else 2^-(m[[g]] - m[[ro$ref]])
+          2^-(m[[g]] - m[[ro$ref]])
         }, 0)
       }
     }
+    # Plain column names
+    lab <- c("Sum Sq" = "Sum of squares", "Mean Sq" = "Mean square", NumDF = "df (Tx)",
+             DenDF = "df (error)", "F value" = "F", "Pr(>F)" = "p", q_FDR = "q (FDR)")
+    i <- names(df) %in% names(lab)
+    names(df)[i] <- lab[names(df)[i]]
     df
   })
 
@@ -872,29 +997,30 @@ server <- function(input, output, session) {
     df$lower.CL <- ifelse(flip, -df$upper.CL, lo)
     df$upper.CL <- ifelse(flip, -lo, df$upper.CL)
     # dCt data: fold change of the first group vs the second (2^-estimate)
-    lg <- df$Transform == "log10"
     if (identical(input$scale, "fc")) {
-      df$Fold_change <- ifelse(lg, NA, 2^-df$estimate)
-      df$FC_lower <- ifelse(lg, NA, 2^-df$upper.CL)
-      df$FC_upper <- ifelse(lg, NA, 2^-df$lower.CL)
-    }
-    # log10 data: ratio of the first group to the second (10^estimate)
-    if (any(lg)) {
-      df$Ratio <- ifelse(lg, 10^df$estimate, NA)
-      df$Ratio_lower <- ifelse(lg, 10^df$lower.CL, NA)
-      df$Ratio_upper <- ifelse(lg, 10^df$upper.CL, NA)
+      df$Fold_change <- 2^-df$estimate
+      df$FC_lower <- 2^-df$upper.CL
+      df$FC_upper <- 2^-df$lower.CL
     }
     df
   })
 
   # 3 sig. figs on screen; CSVs keep full precision
   show_p <- function(df) {
-    for (col in intersect(c("Pr(>F)", "q_FDR", "p.value"), names(df))) {
+    for (col in intersect(c("p", "q (FDR)", "p.value"), names(df))) {
       df[[col]] <- as.character(signif(df[[col]], 3))
     }
     df
   }
   output$anova_table <- renderTable(show_p(anova_df()), digits = 4)
+  output$outlier_table <- renderTable({
+    r <- results(); d <- r$prep$datos
+    o <- do.call(rbind, lapply(r$res, function(x) if (nrow(x$out)) data.frame(
+      Parameter = x$label, "CSV row" = as.integer(rownames(d)[x$out$i]) + 1L,
+      Tx = d$Tx[x$out$i], Line = d$Line[x$out$i], Batch = d$Batch[x$out$i],
+      Value = d[[x$var]][x$out$i], "Scaled residual" = x$out$resid, check.names = FALSE)))
+    if (is.null(o)) data.frame(Result = "None flagged") else o
+  }, digits = 3)
   output$pairs_table <- renderTable(show_p(pairs_df()), digits = 4)
 
   output$anova_print <- renderPrint({
@@ -920,9 +1046,9 @@ server <- function(input, output, session) {
                        cols = input$cols, shapes = input$shapes, order = tx_ord(),
                        labels = input$sig, size = input$pt_size,
                        brackets = !identical(input$sig, "none"), scale = input$scale, ref = input$ref,
-                       ylab = input$ylab, err = input$err, dir = input$dir,
-                       caps = input$caps, center = input$center, rot = input$rot,
-                       adj_batch = input$adj_batch))
+                       ylab = input$ylab, err = input$err,
+                       center = input$center, rot = input$rot,
+                       adj_batch = input$adj_batch, outliers = input$outliers))
 
   # Size in inches, clamped to 3-12
   dims <- reactive({

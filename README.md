@@ -29,8 +29,14 @@ Control,L1,B2,4.35,6.02
 AD,L5,B1,5.02,7.44
 ```
 
-- **Line:** one label per actual cell line.
-- **Batch:** numbered within each line (L1's first batch is B1).
+- **One file = one experiment** (same comparison, same measurement type).
+- **Line:** one label per actual cell line, e.g. its ID (C20300M). Same label
+  across groups for the same line.
+- **Batch:** what shifts measurements together beyond the line, e.g. a
+  differentiation round. Real IDs recommended (D2026-06-11); numbering within
+  each line (B1, B2) also works.
+- The batch question (step 3) appears only when a batch label is used by
+  more than one line.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
@@ -44,21 +50,22 @@ batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
 (e.g. gene panels). Adjusts Tx p-values across all parameters in a run.
 
-**Log10 transformation** (optional, per parameter) for data skewed toward
-high values (a few much higher than the rest). No 0 or negative values.
-Fit on log10 values, plotted on a log axis; groups are compared as ratios
-(10^estimate).
+**Possible outliers:** cells more than 3 SD from the model's prediction for
+their group, line and batch (scaled residual). Circled in red and listed
+under ANOVA results. Nothing is removed.
 
-If lines share batches (multiple lines run per batch, e.g. on the
-same qPCR plate), answer **"Yes"** to **"Did different lines share a batch?"** to use
-the crossed model
+**Skewed data** (a few values much higher than the rest, e.g. event
+frequency): log10-transform values before upload. No 0 or negative values.
+
+If a batch label appears in more than one line, step 3 asks **"Was it the
+same batch for these lines?"** Answer **"Yes"** to use the crossed model
 `parameter ~ Tx + (1 | Line) + (1 | Batch)`. Batch labels must then mean the
 same run for every line.
 
 ## Plots
 
-Dots, bars or violins showing each sample, with error bars (95% CI or SE, or 
-the raw SEM or SD). The Y axis can show values as entered, relative to a 
+Dots, bars, box plots or violins showing each sample, with error bars (95% CI or SE, or 
+the raw SEM or SD; none by default for box plots). The Y axis can show values as entered, relative to a 
 reference group (linear data), or as fold change 2^-ΔΔCt (ΔCt data, qPCR). 
 Statistics always use the values as entered.
 
