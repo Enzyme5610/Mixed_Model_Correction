@@ -555,9 +555,10 @@ coverage <- function(p, vars) {
   }))
 }
 
-# Step 3 mini spreadsheet; color = one batch
+# Mini spreadsheet; color = one run
 batch_sheet <- function(rows, caption, formula) {
-  cols <- c(g = "#0F6E56", p = "#534AB7", o = "#D85A30", b = "#185FA5")
+  cols <- c(g = "#0F6E56", p = "#534AB7", o = "#D85A30", b = "#185FA5",
+            y = "#854F0B", k = "#993556")
   tagList(
     tags$table(class = "mmc-sheet",
       tags$tr(tags$th("Tx"), tags$th("Line"), tags$th("Batch")),
@@ -565,6 +566,57 @@ batch_sheet <- function(rows, caption, formula) {
         tags$td(r[1]), tags$td(r[2]), tags$td(r[3])))),
     tags$small(class = "text-muted d-block", caption),
     tags$small(class = "text-muted font-monospace d-block", formula))
+}
+
+# Welcome tab: steps, batches, designs and fallbacks
+welcome_page <- function() {
+  step <- function(n, title, sub) div(class = "mmc-step",
+    strong(n, " ", title), tags$small(class = "text-muted d-block", sub))
+  arrow <- span(class = "mmc-arrow", "→")
+  fb <- function(data, model) tags$tr(tags$td(data), tags$td(model))
+  div(class = "p-2", style = "max-width: 900px;",
+    h3("Welcome to Mixed Model Correction!"),
+    p("Tests treatment effects on cells grouped in lines and batches. Replaces the",
+      "t-test and one-way ANOVA for this kind of data. Runs in your browser; your",
+      "data stays on your computer."),
+    h5(class = "mt-4", "How to use"),
+    div(class = "mmc-steps",
+      step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
+      step("2", "Parameters", "Numeric columns preselected"), arrow,
+      step("3", "Batch design", "Nested unless lines shared a batch"), arrow,
+      step("4", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
+      step("5", "Run models", "Results and plots open in the tabs")),
+    h5(class = "mt-4", "What is a batch?"),
+    p("Within a line, each separate run gets its own batch label. A line's first run",
+      "is B1, its second B2. Different lines can all be B1. One file = one experiment."),
+    h5(class = "mt-4", "Batch design (step 3)"),
+    div(class = "row g-3",
+      div(class = "col-md-6", div(class = "border rounded p-2 h-100",
+        strong("Nested (default)"), p(class = "small mb-1", "Most experiments."),
+        batch_sheet(list(
+          c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
+          c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
+          c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
+          "Each color holds one line. L2's B1 is not L1's B1.", "(1|Line/Batch)"))),
+      div(class = "col-md-6", div(class = "border rounded p-2 h-100",
+        strong("Crossed"), p(class = "small mb-1", "Lines run together, e.g. one qPCR plate."),
+        batch_sheet(list(
+          c("Control", "L1", "B1", "g"), c("AD", "L2", "B1", "g"),
+          c("Control", "L3", "B1", "g"), c("Control", "L1", "B2", "p"),
+          c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
+          "One color holds several lines. Same label = same run for every line.",
+          "(1|Line) + (1|Batch)")))),
+    helpText("Color = one run."),
+    h5(class = "mt-4", "Which model runs"),
+    tags$table(class = "table table-sm w-auto",
+      tags$tr(tags$th("Your data"), tags$th("Model used")),
+      fb("Crossed: several lines share a batch", tags$code("(1|Line) + (1|Batch)")),
+      fb("Several lines, some with repeat batches", tags$code("(1|Line/Batch)")),
+      fb("Several lines, one batch each", tags$code("(1|Line)")),
+      fb("One line, several batches", tagList(tags$code("(1|Batch)"), " (that line only)")),
+      fb("One line, one batch", "Can't be tested")),
+    p(class = "small text-muted", "Full details: ",
+      tags$a(href = "https://github.com/Enzyme5610/Mixed_Model_Correction", "README")))
 }
 
 # Plot download formats (raster at 300 dpi)
@@ -649,6 +701,9 @@ ui <- page_sidebar(
       .mmc-sheet { border-collapse: collapse; table-layout: fixed; width: 100%; margin: 4px 0 2px; font: .75rem monospace; }
       .mmc-sheet th { background: #f1f1f1; color: #555; border: 1px solid #ccc; padding: 1px 6px; font-weight: 400; }
       .mmc-sheet td { color: #fff; font-weight: 600; border: 1px solid #fff; padding: 1px 6px; }
+      .mmc-steps { display: flex; flex-wrap: wrap; gap: .4rem; align-items: stretch; }
+      .mmc-step { border: 1px solid #dee2e6; border-radius: .5rem; padding: .4rem .6rem; flex: 1 1 110px; max-width: 160px; }
+      .mmc-arrow { align-self: center; font-size: 1.4rem; color: #888; }
       #design .radio { margin-bottom: .6rem; }"),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
     helpText("Needs columns named Tx, Line and Batch (exact spelling), in any position."),
@@ -660,17 +715,8 @@ ui <- page_sidebar(
     uiOutput("param_warning"),
     hr(),
     radioButtons("design", "3. Batch design",
-      choiceNames = list(
-        tagList("Nested (default)", batch_sheet(list(
-          c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
-          c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b")),
-          "Each line's batches are its own.", "(1|Line/Batch)")),
-        tagList("Crossed", batch_sheet(list(
-          c("Control", "L1", "B1", "g"), c("AD", "L3", "B1", "g"),
-          c("Control", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
-          "One batch holds several lines (e.g. one qPCR plate).", "(1|Line) + (1|Batch)"))),
-      choiceValues = c("nested", "crossed")),
-    helpText("Color = one batch."),
+                 choices = c("Nested (default)" = "nested", "Crossed" = "crossed")),
+    helpText("See the Welcome tab."),
     uiOutput("design_note"),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",
@@ -685,6 +731,8 @@ ui <- page_sidebar(
         "Shiny app and visualizations: Prachetas Jai Patel")
   ),
   navset_card_tab(
+    id = "tabs",
+    nav_panel("Welcome", welcome_page()),
     nav_panel("ANOVA results",
       helpText("Fold-change columns appear when the plot Y axis is set to fold change",
                "(ΔCt data); confidence intervals are in the Pairwise tab."),
@@ -892,6 +940,7 @@ server <- function(input, output, session) {
   })
 
   observeEvent(results(), {
+    nav_select("tabs", "ANOVA results")
     labels <- vapply(results()$res, `[[`, "", "label")
     updateSelectInput(session, "plot_param", choices = labels)
     updateSelectizeInput(session, "multi", choices = labels, selected = labels)
