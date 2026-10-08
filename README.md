@@ -32,35 +32,36 @@ AD,L5,B1,5.02,7.44
 - **One file = one experiment** (same comparison, same measurement type).
 - **Line:** one label per actual cell line, e.g. its ID (C20300M). Same label
   across groups for the same line.
-- **Batch:** what shifts measurements together beyond the line, e.g. a
-  differentiation round. Real IDs recommended (D2026-06-11); numbering within
-  each line (B1, B2) also works.
-- The batch question (step 3) appears only when a batch label is used by
-  more than one line.
+- **Batch:** within a line, each separate run gets its own batch label. A
+  line's first run is B1, its second B2. Different lines can all be B1.
+- **Crossed** (step 3): only when several lines shared a run (e.g. one qPCR
+  plate). The same batch label must then mean the same run for every line.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
 ## Model
 
-`parameter ~ Tx + (1 | Line/Batch)`, fit with `lmerTest::lmer`, with Tx
-tested by a Type II F test using Kenward-Roger degrees of freedom. With one
-Line the model uses `(1 | Batch)`; with one Batch, or one row per line and
-batch, `(1 | Line)`. Pairwise comparisons use `emmeans`.
+`parameter ~ Tx + (1 | Line/Batch)` (nested, default), fit with
+`lmerTest::lmer`, with Tx tested by a Type II F test using Kenward-Roger
+degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
+Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
+`emmeans`.
 
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
 (e.g. gene panels). Adjusts Tx p-values across all parameters in a run.
 
 **Possible outliers:** cells more than 3 SD from the model's prediction for
 their group, line and batch (scaled residual). Circled in red and listed
-under ANOVA results. Nothing is removed.
+under ANOVA results. Nothing is removed. Optional residual checks (normal
+Q-Q, residuals vs fitted) test the model's assumptions on the residuals.
 
 **Skewed data** (a few values much higher than the rest, e.g. event
 frequency): log10-transform values before upload. No 0 or negative values.
 
-If a batch label appears in more than one line, step 3 asks **"Was it the
-same batch for these lines?"** Answer **"Yes"** to use the crossed model
-`parameter ~ Tx + (1 | Line) + (1 | Batch)`. Batch labels must then mean the
-same run for every line.
+**Crossed** (step 3) uses `parameter ~ Tx + (1 | Line) + (1 | Batch)` when
+several lines shared a batch (e.g. one qPCR plate). Batch labels must then
+mean the same run for every line. Without a shared batch it falls back to
+nested.
 
 ## Plots
 

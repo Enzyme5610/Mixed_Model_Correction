@@ -18,9 +18,12 @@ prepare_data <- function(path) {
     datos[[v]] <- factor(datos[[v]], levels = unique(datos[[v]]))
   cols <- which(!original_names %in% c("Tx", "Line", "Batch") &
                 nzchar(trimws(original_names)))  # skip blank headers
+  # Metadata (dates, IDs, wells) and constant columns aren't preselected
+  meta <- grepl("date|day|well|passage|(^|[^a-z])id($|[^a-z])", original_names[cols], ignore.case = TRUE) |
+    vapply(datos[cols], function(x) length(unique(na.omit(x))) < 2, TRUE)
   list(datos = datos, MM_Vars = names(datos)[cols],
        parameter_labels = original_names[cols],
-       numeric = vapply(datos[cols], is.numeric, logical(1)))
+       numeric = vapply(datos[cols], is.numeric, logical(1)) & !meta)
 }
 
 # Random effects by design and number of Lines/Batches, as in the script
@@ -28,10 +31,12 @@ random_term <- function(datos, design = "nested") {
   nl <- nlevels(datos$Line)
   nb <- nlevels(datos$Batch)
   if (nl > 1 && nb > 1) {
-    if (design == "crossed") return("(1|Line) + (1|Batch)")
-    # One row per line x batch: nested can't be fit, reduces to (1|Line)
+    # Crossed needs a batch shared by lines
+    if (design == "crossed" && length(shared_batches(datos))) return("(1|Line) + (1|Batch)")
+    # Nested needs a line with repeat batches and replicates within them
+    repeats <- any(tapply(datos$Batch, datos$Line, function(b) length(unique(b))) > 1, na.rm = TRUE)
     one_each <- all(table(interaction(datos$Line, datos$Batch, drop = TRUE)) == 1)
-    if (one_each) "(1|Line)" else "(1|Line/Batch)"
+    if (repeats && !one_each) "(1|Line/Batch)" else "(1|Line)"
   }
   else if (nl > 1) "(1|Line)"
   else if (nb > 1) "(1|Batch)"
@@ -526,7 +531,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults) {
   star_key(opt, lx, ky)
 }
 
-# Batch labels used by more than one line (step 3 only matters then)
+# Batch labels used by more than one line (crossed needs one)
 shared_batches <- function(d) {
   if (nlevels(d$Line) < 2 || nlevels(d$Batch) < 2) return(list())
   Filter(function(x) length(x) > 1, lapply(split(as.character(d$Line), d$Batch), unique))
@@ -654,21 +659,19 @@ ui <- page_sidebar(
     helpText("Numeric columns are preselected."),
     uiOutput("param_warning"),
     hr(),
-    strong("3. Batches"),
+    radioButtons("design", "3. Batch design",
+      choiceNames = list(
+        tagList("Nested (default)", batch_sheet(list(
+          c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
+          c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b")),
+          "Each line's batches are its own.", "(1|Line/Batch)")),
+        tagList("Crossed", batch_sheet(list(
+          c("Control", "L1", "B1", "g"), c("AD", "L3", "B1", "g"),
+          c("Control", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
+          "One batch holds several lines (e.g. one qPCR plate).", "(1|Line) + (1|Batch)"))),
+      choiceValues = c("nested", "crossed")),
+    helpText("Color = one batch."),
     uiOutput("design_note"),
-    conditionalPanel("output.design_needed",
-      radioButtons("design", "Was it the same batch for these lines?",
-        choiceNames = list(
-          tagList("No, each line had its own", batch_sheet(list(
-            c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
-            c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b")),
-            "Same label, different batches.", "(1|Line/Batch)")),
-          tagList("Yes, one shared batch", batch_sheet(list(
-            c("Control", "L1", "B1", "g"), c("AD", "L3", "B1", "g"),
-            c("Control", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
-            "One batch, several lines.", "(1|Line) + (1|Batch)"))),
-        choiceValues = c("nested", "crossed")),
-      helpText("Color = one batch.")),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
@@ -690,7 +693,14 @@ ui <- page_sidebar(
       h6(class = "mt-4", "Possible outliers"),
       helpText("Cells more than 3 SD from the model's prediction for their group, line and",
                "batch. Nothing is removed; check these cells and edit the CSV if needed."),
-      tableOutput("outlier_table")
+      tableOutput("outlier_table"),
+      checkboxInput("show_resid", "Show residual checks", FALSE),
+      conditionalPanel("input.show_resid",
+        selectInput("resid_param", "Parameter", choices = NULL),
+        plotOutput("resid_plot", width = "640px", height = "320px", fill = FALSE),
+        helpText("Grey band: 95% range expected if the model fits. Left: points inside",
+                 "the band, residuals roughly normal. Right: even spread around 0, equal",
+                 "variance. Red: possible outlier."))
     ),
     nav_panel("ANOVA output", verbatimTextOutput("anova_print")),
     nav_panel("Pairwise",
@@ -779,8 +789,8 @@ ui <- page_sidebar(
       markdown("
 **Model.** Each parameter: `parameter ~ Tx + (1 | Line/Batch)`, fit with
 `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
-If lines were run together (step 3 \"Yes\"): `(1 | Line) + (1 | Batch)`.
-One Line: `(1 | Batch)`. One Batch, or no replicates per line and batch:
+Crossed (step 3, lines shared a batch): `(1 | Line) + (1 | Batch)`.
+One Line: `(1 | Batch)`. One Batch, or no line with repeat batches:
 `(1 | Line)`.
 
 **FDR.** q-values (Benjamini-Hochberg) for panels of many similar
@@ -839,33 +849,17 @@ server <- function(input, output, session) {
     prev_type(input$type)
   }, ignoreInit = TRUE)
 
-  # Step 3 shows only when a batch label is shared by lines
-  design_needed <- reactive(length(shared_batches(prep()$datos)) > 0)
-  output$design_needed <- reactive(isTRUE(tryCatch(design_needed(), error = function(e) FALSE)))
-  outputOptions(output, "design_needed", suspendWhenHidden = FALSE)
-
+  # Model that will run, with fallbacks
   output$design_note <- renderUI({
-    if (is.null(input$file)) return(helpText("Upload data to check."))
-    p <- prep(); d <- p$datos
-    sh <- shared_batches(d)
-    note <- function(...) div(class = "alert alert-info small py-1 px-2 mb-2", ...)
-    if (!length(sh)) {
-      f <- tryCatch(random_term(d), error = function(e) NULL)
-      return(note(sprintf("Detected %d line(s), %d batch(es): ", nlevels(d$Line), nlevels(d$Batch)),
-        if (is.null(f)) "can't be tested." else tags$code(f),
-        if (nlevels(d$Line) == 1) " Results apply to this line only."))
-    }
-    b <- names(sh)[1]
-    m <- paste0(b, " appears in ", paste(sh[[1]], collapse = ", "), ".")
-    # A date column can tell shared batches apart
-    dc <- p$MM_Vars[grepl("date", p$parameter_labels, ignore.case = TRUE)][1]
-    if (!is.na(dc)) {
-      split_b <- any(vapply(names(sh), function(x)
-        length(unique(na.omit(d[[dc]][d$Batch == x]))) > 1, TRUE))
-      m <- paste0(m, " Your '", p$parameter_labels[match(dc, p$MM_Vars)],
-                  "' column suggests ", if (split_b) "No." else "Yes.")
-    }
-    note(m)
+    if (is.null(input$file)) return(NULL)
+    d <- prep()$datos
+    f <- tryCatch(random_term(d, input$design), error = function(e) NULL)
+    div(class = "alert alert-info small py-1 px-2 mb-2",
+      sprintf("%d line(s), %d batch(es). Model: ", nlevels(d$Line), nlevels(d$Batch)),
+      if (is.null(f)) "can't be tested." else tags$code(f),
+      if (identical(input$design, "crossed") && !length(shared_batches(d)))
+        " No batch holds several lines, so crossed isn't possible.",
+      if (nlevels(d$Line) == 1) " Results apply to this line only.")
   })
 
   output$param_warning <- renderUI({
@@ -891,7 +885,7 @@ server <- function(input, output, session) {
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, input$adjust,
                           function(n, label) incProgress(1 / n, detail = label),
-                          design = if (design_needed()) input$design else "nested"),
+                          design = input$design),
                error = function(e) validate(conditionMessage(e))))
     list(res = res, prep = p, adjust = input$adjust,
          base = tools::file_path_sans_ext(input$file$name))
@@ -1013,6 +1007,37 @@ server <- function(input, output, session) {
     df
   }
   output$anova_table <- renderTable(show_p(anova_df()), digits = 4)
+
+  # Residual checks, drawn only when shown
+  observeEvent(results(), updateSelectInput(session, "resid_param",
+    choices = vapply(results()$res, `[[`, "", "label")))
+  output$resid_plot <- renderPlot({
+    r <- results()
+    x <- r$res[[match(input$resid_param, vapply(r$res, `[[`, "", "label"))]]
+    req(x)
+    rs <- residuals(x$MM_Form, type = "pearson", scaled = TRUE)
+    col <- ifelse(abs(rs) > 3, "red", "grey40")
+    par(mfrow = c(1, 2), mar = c(4, 4, 2, 1), tcl = -0.25, mgp = c(2.5, 0.6, 0))
+    # Q-Q with pointwise 95% band around the quartile line
+    q <- qqnorm(rs, plot.it = FALSE)
+    z <- sort(q$x); pp <- pnorm(z); n <- length(rs)
+    b <- diff(quantile(rs, c(.25, .75), names = FALSE)) / diff(qnorm(c(.25, .75)))
+    a <- quantile(rs, .25, names = FALSE) - b * qnorm(.25)
+    se <- b * sqrt(pp * (1 - pp) / n) / dnorm(z)
+    lo <- a + b * z - 1.96 * se; hi <- a + b * z + 1.96 * se
+    plot(q, type = "n", las = 1, main = "Normal Q-Q", ylim = range(rs, lo, hi),
+         xlab = "Theoretical quantiles", ylab = "Scaled residual")
+    polygon(c(z, rev(z)), c(lo, rev(hi)), col = "grey90", border = NA)
+    abline(a, b)
+    points(q, pch = 19, col = col)
+    # Residuals vs fitted; band = 95% expected range
+    fv <- fitted(x$MM_Form)
+    plot(fv, rs, type = "n", las = 1, main = "Residuals vs fitted", ylim = range(rs, -3.2, 3.2),
+         xlab = "Fitted value", ylab = "Scaled residual")
+    rect(par("usr")[1], -1.96, par("usr")[2], 1.96, col = "grey90", border = NA)
+    abline(h = c(-3, 0, 3), lty = c(3, 1, 3), col = "grey60")
+    points(fv, rs, pch = 19, col = col)
+  }, width = 640, height = 320, res = 96)
   output$outlier_table <- renderTable({
     r <- results(); d <- r$prep$datos
     o <- do.call(rbind, lapply(r$res, function(x) if (nrow(x$out)) data.frame(
