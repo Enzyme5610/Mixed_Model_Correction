@@ -34,8 +34,10 @@ AD,L5,B1,5.02,7.44
 - **One file = one experiment** (same comparison, same measurement type).
 - **Line:** one label per actual cell line, e.g. its ID (C20300M). Same label
   across groups for the same line.
-- **Batch:** a unit that can shift all its cells together. One batch source
-  per file: culture batch or plate, not both.
+- **Batch:** your main batch source, a unit that can shift all its cells
+  together: the culture batch if you track it, otherwise the coverslip or
+  plate. A second source (coverslips within culture batches, or a shared run)
+  needs Advanced designs.
 - **Nested** (default; most ephys, some qPCR): each batch belongs to one line
   (culture batch, differentiation round, coverslip, or a qPCR plate that held
   one line). Number each line's batches B1, B2. Different lines can all be B1.
@@ -103,6 +105,21 @@ one shared Y axis, with the groups next to each other for each parameter.
 Ctrl_F, KO_M, KO_F` are split at the last `_`. Ctrl vs KO is fit within each
 subset (M, F) and on all cells (Combined), each its own model. Every group
 needs every subset. Does not test whether subsets differ.
+
+## Advanced designs
+
+The **Advanced designs** switch (sidebar) adds the crossed batch design and
+optional columns, used by exact name:
+
+- **Pair:** matched lines (e.g. parental and corrected clone). Adds `(1 | Pair)`.
+- **Coverslip:** coverslips within each culture batch (Batch = culture
+  batch). Adds `(1 | Line:Batch:Coverslip)`.
+- **Run:** a second batch source shared by lines (plate, recording day) when
+  Batch is the culture batch. Adds `(1 | Run) + (1 | Line:Run)`.
+
+Each term is added only when the data can estimate it. With Split and combined
+names (e.g. `Ctrl_veh, Ctrl_drug, KO_veh, KO_drug`), the Pairwise tab adds a
+Group × Subset interaction test (genotype × treatment).
 
 ## Credits
 

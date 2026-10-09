@@ -14,9 +14,9 @@ prepare_data <- function(path) {
   names(datos) <- make.names(original_names, unique = TRUE)
   datos <- datos[!is.na(datos$Tx), ]  # drop empty rows
   # Levels in CSV order
-  for (v in intersect(c("Tx", "Line", "Batch"), names(datos)))
+  for (v in intersect(c("Tx", "Line", "Batch", opt_cols), names(datos)))
     datos[[v]] <- factor(datos[[v]], levels = unique(datos[[v]]))
-  cols <- which(!original_names %in% c("Tx", "Line", "Batch") &
+  cols <- which(!original_names %in% c("Tx", "Line", "Batch", opt_cols) &
                 nzchar(trimws(original_names)))  # skip blank headers
   # Metadata (dates, IDs, wells) and constant columns aren't preselected
   meta <- grepl("date|day|well|passage|(^|[^a-z])id($|[^a-z])", original_names[cols], ignore.case = TRUE) |
@@ -26,8 +26,35 @@ prepare_data <- function(path) {
        numeric = vapply(datos[cols], is.numeric, logical(1)) & !meta)
 }
 
+# Advanced: optional columns, used by exact name
+opt_cols <- c("Pair", "Coverslip", "Run")
+
+# Random effects; Advanced adds terms for optional columns
+random_term <- function(datos, design = "nested", extras = FALSE) {
+  rand <- base_term(datos, design)
+  if (extras) extra_terms(datos, rand) else rand
+}
+
+# Pair, Coverslip within Line:Batch, Run and Line:Run, each only if estimable
+# (several groups, some with replicates) and not the same grouping as a term already in
+extra_terms <- function(d, rand, cand = list("Pair", c("Line", "Batch", "Coverslip"), "Run", c("Line", "Run"))) {
+  grp <- function(cols) interaction(d[cols], drop = TRUE)
+  same <- function(g, h) nlevels(g) == nlevels(h) && nlevels(interaction(g, h, drop = TRUE)) == nlevels(g)
+  parts <- trimws(strsplit(gsub("[()]|1\\|", "", rand), "+", fixed = TRUE)[[1]])
+  parts <- unlist(lapply(strsplit(parts, "/"), function(x) if (length(x) > 1) c(x[1], paste(x, collapse = ":")) else x))
+  have <- lapply(strsplit(parts, ":"), grp)
+  for (cols in cand) {
+    if (!all(cols %in% names(d))) next
+    g <- grp(cols)
+    if (nlevels(g) < 2 || !any(table(g) > 1) || any(vapply(have, same, TRUE, g = g))) next
+    rand <- paste0(rand, " + (1|", paste(cols, collapse = ":"), ")")
+    have <- c(have, list(g))
+  }
+  rand
+}
+
 # Random effects by design and number of Lines/Batches, as in the script
-random_term <- function(datos, design = "nested") {
+base_term <- function(datos, design = "nested") {
   nl <- nlevels(datos$Line)
   nb <- nlevels(datos$Batch)
   if (nl > 1 && nb > 1) {
@@ -46,7 +73,7 @@ random_term <- function(datos, design = "nested") {
 }
 
 run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
-                       design = "nested") {
+                       design = "nested", extras = FALSE) {
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
@@ -55,7 +82,7 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
     # Lines/Batches counted where this parameter was measured
-    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design),
+    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, extras),
                      error = function(e) stop("'", label, "': ", conditionMessage(e), call. = FALSE))
     f <- reformulate(c("Tx", rand), var)
     warn <- character()
@@ -559,7 +586,27 @@ split_prep <- function(p, var) {
   vars <- paste0(".split", seq_along(parts))
   for (i in seq_along(parts)) d[[vars[i]]] <- ifelse(part == parts[i], d[[var]], NA)
   d$.split_all <- d[[var]]
+  d$.subset <- factor(part, levels = parts)
   list(datos = d, MM_Vars = c(vars, ".split_all"), parameter_labels = c(parts, "Combined"))
+}
+
+# Advanced: does the group difference change between subsets? (Group x Subset, all cells)
+split_interaction <- function(p, var, label, design, extras) {
+  d <- split_prep(p, var)$datos
+  d <- droplevels(d[!is.na(d[[var]]), ])
+  out <- function(F = NA, df1 = NA, df2 = NA, pv = NA, note = "")
+    data.frame(Parameter = label, "F" = F, "df (Group \u00d7 Subset)" = df1, "df (error)" = df2,
+               p = pv, Note = note, check.names = FALSE)
+  # Subsets that differ by line need several lines each, or it's a line difference
+  if (any(tapply(d$Line, d$.subset, function(l) length(unique(l))) < 2))
+    return(out(note = "Needs 2+ lines per subset"))
+  # Group within lines: its effect may differ by line
+  rand <- extra_terms(d, random_term(d, design, extras), list(c("Line", "Tx")))
+  m <- suppressMessages(suppressWarnings(lmerTest::lmer(reformulate(c("Tx * .subset", rand), var),
+                                                        data = d, REML = TRUE)))
+  a <- stats::anova(m, type = "II", ddf = "Kenward-Roger")["Tx:.subset", ]
+  if (!is.finite(a[["F value"]]) || a[["F value"]] < 0) return(out(note = "Not estimable"))
+  out(a[["F value"]], a$NumDF, a$DenDF, a[["Pr(>F)"]])
 }
 
 # Batch labels used by more than one line (crossed needs one)
@@ -731,8 +778,9 @@ welcome_page <- function() {
         c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
         "Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each.",
         "(1|Line/Batch)")),
-      p(class = "small text-muted mt-2", "One batch source per file: culture batch or plate, not",
-        "both. Same line in both groups (KD, OE, drug)? Use the same line label."),
+      p(class = "small text-muted mt-2", "Batch = your main batch source: the culture batch if you",
+        "track it, otherwise the coverslip or plate. Two sources (e.g. culture batch and coverslip):",
+        "Advanced designs. Same line in both groups (KD, OE, drug)? Use the same line label."),
       h5(class = "mt-4", "Which model runs"),
       tags$table(class = "table table-sm w-auto mb-1",
         tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
@@ -779,9 +827,10 @@ welcome_page <- function() {
             c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
             "B1 is one day or plate for every line.",
             "(1|Line) + (1|Batch) + (1|Line:Batch)")))),
-      p(class = "small text-muted", "One batch source per file: culture batch or plate, not",
-        "both. Same line in both groups (KD, OE, drug)? Use the same line label; either",
-        "design works."),
+      p(class = "small text-muted", "Batch = your main batch source: the culture batch if you",
+        "track it, otherwise the coverslip or plate. Coverslips within culture batches, or a second",
+        "shared source: optional columns below. Same line in both groups (KD, OE, drug)? Use the same",
+        "line label; either design works."),
       h5(class = "mt-4", "Which model runs"),
       tags$table(class = "table table-sm w-auto mb-1",
         tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Design"), tags$th("Model")),
@@ -791,7 +840,19 @@ welcome_page <- function() {
         fb("1", "≥ 2", "Either", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
         fb("1", "1", "Either", "Can't be tested")),
       p(class = "small text-muted", "y = one parameter. Crossed with no shared batch runs as Nested.",
-        "(1|Line:Batch) is left out with one row per line per batch, or one batch per line.")),
+        "(1|Line:Batch) is left out with one row per line per batch, or one batch per line."),
+      h5(class = "mt-4", "More designs (optional columns)"),
+      p(class = "small", "Add a column with one of these exact names. Used only with Advanced designs on."),
+      tags$table(class = "table table-sm w-auto mb-1",
+        tags$tr(tags$th("Column"), tags$th("Use"), tags$th("Adds")),
+        fb("Pair", "Matched lines, e.g. parental and corrected clone", tags$code("(1|Pair)")),
+        fb("Coverslip", "Coverslips within each culture batch (Batch = culture batch)",
+           tags$code("(1|Line:Batch:Coverslip)")),
+        fb("Run", "Second batch source shared by lines (plate, recording day); Batch = culture batch",
+           tags$code("(1|Run) + (1|Line:Run)"))),
+      p(class = "small text-muted", "Each term is added only if the data can estimate it. Genotype \u00d7",
+        "treatment: name groups like Ctrl_veh, Ctrl_drug, KO_veh, KO_drug and use Split and combined;",
+        "the Pairwise tab adds a Group \u00d7 Subset interaction test.")),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own",
@@ -811,8 +872,10 @@ welcome_page <- function() {
     h5(class = "mt-4", "Not covered"),
     tags$ul(class = "small",
       tags$li("Data: small counts, percentages near 0 or 100%, scores, omics, skewed data with zeros"),
-      tags$li("Designs: two batch sources, extra levels (e.g. coverslips within culture batches), genotype × treatment,",
-              "repeated measures per cell, matched pairs"),
+      tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Designs: two batch sources, extra levels (e.g. coverslips within",
+        "culture batches), genotype \u00d7 treatment, repeated measures per cell, matched pairs. All but",
+        "repeated measures: Advanced designs."),
+      tags$li(`data-display-if` = "input.advanced", `data-ns-prefix` = "", "Designs: repeated measures per cell (input-output curves, time courses)"),
       tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Batches shared by lines (one qPCR plate with several",
         "lines): corrected per line; the shared plate shift isn't separated. Crossed model: Advanced",
         "switch in the sidebar.")),
@@ -967,7 +1030,12 @@ ui <- page_sidebar(
       helpText("Fold-change columns (2^-estimate) appear when the plot Y axis is set",
                "to fold change (ΔCt data)."),
       tableOutput("pairs_table"),
-      actionButton("dl_pairs", "Download pairwise (.csv)", icon = icon("download"))
+      actionButton("dl_pairs", "Download pairwise (.csv)", icon = icon("download")),
+      conditionalPanel("input.pairs_view == 'split' && input.advanced",
+        h6(class = "mt-4", "Group \u00d7 Subset interaction"),
+        helpText("Does the group difference change between subsets (e.g. KO effect in M vs F)?",
+                 "All cells, one model per parameter."),
+        tableOutput("inter_table"))
     ),
     nav_panel("Plots", layout_sidebar(
       fillable = FALSE,
@@ -1062,6 +1130,10 @@ a run.
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
 The reference group sets direction only; p-values don't change.
 
+**Advanced designs.** Optional columns Pair, Coverslip and Run add random
+terms when the data can estimate them; Split and combined adds a Group \u00d7
+Subset interaction test.
+
 **Plots.** Display only; statistics always use the values as entered.
 Model CI/SE match the statistics; SEM/SD ignore Line and Batch.
 Batch-adjusted values subtract each batch's estimated shift; don't re-test
@@ -1112,12 +1184,13 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   design <- function() if (isTRUE(input$advanced)) input$design else "nested"
+  extras <- function() isTRUE(input$advanced)  # optional columns and interaction test
 
   # Model that will run, with fallbacks
   output$design_note <- renderUI({
     if (is.null(input$file)) return(NULL)
     d <- prep()$datos
-    f <- tryCatch(random_term(d, design()), error = function(e) NULL)
+    f <- tryCatch(random_term(d, design(), extras()), error = function(e) NULL)
     div(class = "alert alert-info small py-1 px-2 mb-2",
       sprintf("%d line(s), %d batch(es). Model: ", nlevels(d$Line), nlevels(d$Batch)),
       if (is.null(f)) "can't be tested." else tags$code(f),
@@ -1149,9 +1222,9 @@ server <- function(input, output, session) {
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, input$adjust,
                           function(n, label) incProgress(1 / n, detail = label),
-                          design = design()),
+                          design = design(), extras = extras()),
                error = function(e) validate(conditionMessage(e))))
-    list(res = res, prep = p, adjust = input$adjust, design = design(),
+    list(res = res, prep = p, adjust = input$adjust, design = design(), extras = extras(),
          base = tools::file_path_sans_ext(input$file$name))
   })
 
@@ -1328,6 +1401,11 @@ server <- function(input, output, session) {
     if (is.null(o)) data.frame(Result = "None flagged") else o
   }, digits = 3)
   output$pairs_table <- renderTable(show_p(pairs_df()), digits = 4)
+  output$inter_table <- renderTable({
+    o <- do.call(rbind, lapply(split_all(), `[[`, "inter"))
+    validate(need(o, "Interaction test not available for these data."))
+    o
+  }, digits = 4)
 
   output$anova_print <- renderPrint({
     r <- results()
@@ -1369,12 +1447,15 @@ server <- function(input, output, session) {
     sps <- lapply(r$res, function(x) split_prep(r$prep, x$var))
     labels <- vapply(r$res, `[[`, "", "label")
     withProgress(message = "Fitting split models", value = 0,
-      setNames(Map(function(sp, lab) {
+      setNames(Map(function(sp, lab, x) {
         res <- tryCatch(run_models(sp, sp$MM_Vars, r$adjust, function(n, label)
-                          incProgress(1 / (n * length(sps)), detail = paste(lab, label)), r$design),
+                          incProgress(1 / (n * length(sps)), detail = paste(lab, label)),
+                          r$design, r$extras),
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
-        list(prep = sp, res = res)
-      }, sps, labels), labels))
+        inter <- if (isTRUE(r$extras)) tryCatch(split_interaction(r$prep, x$var, lab, r$design, TRUE),
+                                                error = function(e) NULL)
+        list(prep = sp, res = res, inter = inter)
+      }, sps, labels, r$res), labels))
   })
 
   # Current figure: one parameter, all selected in one figure, or split and combined
