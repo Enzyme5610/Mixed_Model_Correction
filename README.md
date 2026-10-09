@@ -38,8 +38,7 @@ AD,L5,B1,5.02,7.44
 - **Batch:** your main batch source, a unit that can shift all its cells
   together: the culture batch if you track it, otherwise the coverslip or
   plate. Number each line's batches B1, B2; different lines can all be B1.
-  A second source (coverslips within culture batches, or a shared run) needs
-  Advanced designs.
+  Treatment applied per coverslip or well: Batch = coverslip or well.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
@@ -115,19 +114,11 @@ model plus a batch shift shared by lines. `(1 | Line:Batch)` is left out with
 one row per line per batch, or one batch per line. Without a shared batch it
 falls back to nested.
 
-**Optional columns**, used by exact name:
-
-- **Pair:** lines come in matched pairs (e.g. parental and corrected clone).
-  Compares within pairs, so shared genetic background drops out (more power).
-  Model: `parameter ~ Tx + (1 | Line/Batch) + (1 | Pair)`.
-- **Coverslip:** several coverslips per culture batch (Batch = culture batch).
-  Cells on one coverslip are more alike; without it they count as independent.
-  Model: `parameter ~ Tx + (1 | Line/Batch) + (1 | Line:Batch:Coverslip)`.
-- **Run:** a second batch source on top of the culture batch: a recording day
-  or plate shared by lines. Removes day or plate shifts. Model:
-  `parameter ~ Tx + (1 | Line/Batch) + (1 | Run) + (1 | Line:Run)`.
-
-Each term is added only when the data can estimate it.
+**Pair** (optional column, used by exact name): lines come in matched pairs
+(e.g. parental and corrected clone). Compares within pairs, so shared genetic
+background drops out (more power). Model:
+`parameter ~ Tx + (1 | Line/Batch) + (1 | Pair)`, added only when the data can
+estimate it.
 
 **Allow line-specific treatment effects** (shown when the same line is in
 several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`. Each line can

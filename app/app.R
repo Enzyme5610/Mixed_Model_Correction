@@ -27,10 +27,10 @@ prepare_data <- function(path) {
        numeric = vapply(datos[cols], is.numeric, logical(1)) & !meta)
 }
 
-# Advanced: optional columns, used by exact name
-opt_cols <- c("Pair", "Coverslip", "Run")
+# Advanced: optional Pair column (matched lines), used by exact name
+opt_cols <- "Pair"
 
-# Random effects; Advanced adds terms for optional columns
+# Random effects; Advanced adds Pair
 random_term <- function(datos, design = "nested", extras = FALSE, line_tx = FALSE) {
   rand <- base_term(datos, design)
   if (extras) rand <- extra_terms(datos, rand)
@@ -39,9 +39,9 @@ random_term <- function(datos, design = "nested", extras = FALSE, line_tx = FALS
   rand
 }
 
-# Pair, Coverslip within Line:Batch, Run and Line:Run, each only if estimable
+# Extra terms (Pair by default), each only if estimable
 # (several groups, some with replicates) and not the same grouping as a term already in
-extra_terms <- function(d, rand, cand = list("Pair", c("Line", "Batch", "Coverslip"), "Run", c("Line", "Run"))) {
+extra_terms <- function(d, rand, cand = list("Pair")) {
   grp <- function(cols) interaction(d[cols], drop = TRUE)
   same <- function(g, h) nlevels(g) == nlevels(h) && nlevels(interaction(g, h, drop = TRUE)) == nlevels(g)
   parts <- trimws(strsplit(gsub("[()]|1\\|", "", rand), "+", fixed = TRUE)[[1]])
@@ -771,7 +771,7 @@ welcome_page <- function() {
     strong(n, " ", title), tags$small(class = "text-muted d-block", sub))
   arrow <- span(class = "mmc-arrow", "→")
   fb <- function(...) tags$tr(lapply(list(...), tags$td))
-  # Full model with the optional column's terms highlighted; base follows the batch design
+  # Full model with the added term highlighted; base follows the batch design
   base <- tagList(
     tags$span(`data-display-if` = "input.design != 'crossed'", `data-ns-prefix` = "", "(1|Line/Batch)"),
     tags$span(`data-display-if` = "input.design == 'crossed'", `data-ns-prefix` = "",
@@ -801,9 +801,10 @@ welcome_page <- function() {
         c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
         "Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each.",
         "(1|Line/Batch)")),
-      p(class = "small text-muted mt-2", "One plate or day with several lines, or two batch sources",
-        "(e.g. culture batch and coverslip): Advanced designs. Same line in both groups (KD, OE, drug)?",
-        "Use the same line label; Advanced designs then offers \u201cAllow line-specific treatment effects\u201d.")),
+      p(class = "small text-muted mt-2", "One plate or day with several lines, or matched clone pairs:",
+        "Advanced designs. Same line in both groups (KD, OE, drug)? Use the same line label; if treated per",
+        "coverslip or well, Batch = coverslip or well. Advanced designs then offers",
+        "\u201cAllow line-specific treatment effects\u201d.")),
     conditionalPanel("input.advanced",
       h5(class = "mt-4", "Batch design (Advanced)"),
       p("Pick the experiment design. One file should be related to one experiment. Batch = your main",
@@ -848,25 +849,15 @@ welcome_page <- function() {
     p(class = "small text-muted", "y = one parameter.", tags$span(`data-display-if` = "input.advanced",
       `data-ns-prefix` = "", "Crossed with no shared batch runs as Nested.")),
     conditionalPanel("input.advanced",
-      h5(class = "mt-4", "More designs (optional columns)"),
-      p(class = "small", "If your experiment has one of these structures, add a column with this exact",
-        "name. The model then accounts for it instead of treating those cells as independent.",
-        tags$span(class = "mmc-add", "Highlighted", .noWS = "after"), ": what the column adds."),
-      tags$table(class = "table table-sm mb-1",
-        tags$tr(tags$th("Column"), tags$th("Add it when"), tags$th("Model")),
-        fb(tags$code("Pair"), paste("Lines come in matched pairs (parental and corrected clone). Compares",
-           "within pairs, so shared genetic background drops out: more power."), model("(1|Pair)")),
-        fb(tags$code("Coverslip"), paste("Several coverslips per culture batch (Batch = culture batch).",
-           "Cells on one coverslip are more alike; without it they count as independent."),
-           model("(1|Line:Batch:Coverslip)")),
-        fb(tags$code("Run"), paste("A second batch source on top of the culture batch: a recording day",
-           "or plate shared by lines. Removes day or plate shifts."), model("(1|Run) + (1|Line:Run)"))),
-      p(class = "small text-muted", "Each term is added only if the data can estimate it; the sidebar",
-        "shows the model for your file."),
+      h5(class = "mt-4", "Matched pairs"),
+      p(class = "small mb-1", "Lines come in matched pairs (parental and corrected clone)? Add a column named",
+        "Pair with each pair's label. Compares within pairs, so shared genetic background drops out: more power."),
+      p(class = "small", model("(1|Pair)")),
       h5(class = "mt-4", "Same line in several groups"),
-      p(class = "small mb-1", "Same line in both groups (KD, OE, drug)? Use the same line label. The sidebar",
-        "then shows \u201cAllow line-specific treatment effects\u201d: each line can respond differently, and the",
-        "test asks whether the effect holds across lines. Needs several lines."),
+      p(class = "small mb-1", "Same line in both groups (KD, OE, drug)? Use the same line label; if treated per",
+        "coverslip or well, Batch = coverslip or well. The sidebar then shows \u201cAllow line-specific",
+        "treatment effects\u201d: each line can respond differently, and the test asks whether the effect",
+        "holds across lines. Needs several lines."),
       p(class = "small", model("(1|Line:Tx)")),
       h5(class = "mt-4", "Comparisons"),
       p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
@@ -896,7 +887,8 @@ welcome_page <- function() {
     h5(class = "mt-4", "Not covered"),
     tags$ul(class = "small",
       tags$li("Data: small counts, percentages near 0 or 100%, scores, omics, skewed data with zeros"),
-      tags$li("Designs: repeated measures per cell (input-output curves, time courses)")),
+      tags$li("Designs: two batch sources at once (culture batch and shared plate), repeated measures per",
+        "cell (input-output curves, time courses)")),
     p(class = "small text-muted", "Full details: ",
       tags$a(href = "https://github.com/Enzyme5610/Mixed_Model_Correction", "README")))
 }
@@ -1166,9 +1158,8 @@ each vs reference (Dunnett) or selected pairs (Holm).
 several groups): adds `(1 | Line:Tx)`. Each line can respond differently; the
 test then asks whether the effect holds across lines. Needs several lines.
 
-**Advanced designs.** Optional columns Pair, Coverslip and Run add random
-terms when the data can estimate them; Split and combined adds a Group \u00d7
-Subset interaction test.
+**Advanced designs.** An optional Pair column adds `(1 | Pair)` when the data
+can estimate it; Split and combined adds a Group \u00d7 Subset interaction test.
 
 **Plots.** Display only; statistics always use the values as entered.
 Model CI/SE match the statistics; SEM/SD ignore Line and Batch.
@@ -1223,7 +1214,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   design <- function() if (isTRUE(input$advanced) && !is.null(input$design)) input$design else "nested"
-  extras <- function() isTRUE(input$advanced)  # optional columns and interaction test
+  extras <- function() isTRUE(input$advanced)  # Pair column and interaction test
   line_tx <- function() isTRUE(input$advanced) && isTRUE(input$line_tx)
   cmp_mode <- function() if (isTRUE(input$advanced) && !is.null(input$cmp)) input$cmp else "all"
   cmp_adjust <- function() switch(cmp_mode(), ref = "dunnett", sel = "holm", input$adjust)
