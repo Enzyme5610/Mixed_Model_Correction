@@ -755,6 +755,12 @@ welcome_page <- function() {
     strong(n, " ", title), tags$small(class = "text-muted d-block", sub))
   arrow <- span(class = "mmc-arrow", "→")
   fb <- function(...) tags$tr(lapply(list(...), tags$td))
+  # Full model with the optional column's terms highlighted; base follows the batch design
+  base <- tagList(
+    tags$span(`data-display-if` = "input.design != 'crossed'", `data-ns-prefix` = "", "(1|Line/Batch)"),
+    tags$span(`data-display-if` = "input.design == 'crossed'", `data-ns-prefix` = "",
+              "(1|Line) + (1|Batch) + (1|Line:Batch)"))
+  model <- function(add) tags$code("y ~ Tx +", base, tags$span(class = "mmc-add", paste("+", add)))
   div(class = "p-2", style = "max-width: 900px;",
     h3("Welcome to Mixed Model Correction!"),
     conditionalPanel("!input.advanced", p(class = "text-muted mb-2",
@@ -843,15 +849,20 @@ welcome_page <- function() {
         "(1|Line:Batch) is left out with one row per line per batch, or one batch per line.",
         "Optional columns below add their terms."),
       h5(class = "mt-4", "More designs (optional columns)"),
-      p(class = "small", "Add a column with one of these exact names. Used only with Advanced designs on."),
-      tags$table(class = "table table-sm w-auto mb-1",
-        tags$tr(tags$th("Column"), tags$th("Use"), tags$th("Adds")),
-        fb("Pair", "Matched lines, e.g. parental and corrected clone", tags$code("(1|Pair)")),
-        fb("Coverslip", "Coverslips within each culture batch (Batch = culture batch)",
-           tags$code("(1|Line:Batch:Coverslip)")),
-        fb("Run", "Second batch source shared by lines (plate, recording day); Batch = culture batch",
-           tags$code("(1|Run) + (1|Line:Run)"))),
-      p(class = "small text-muted", "Each term is added only if the data can estimate it.")),
+      p(class = "small", "If your experiment has one of these structures, add a column with this exact",
+        "name. The model then accounts for it instead of treating those cells as independent. Used only",
+        "with Advanced designs on. ", tags$span(class = "mmc-add", "Highlighted"), ": what the column adds."),
+      tags$table(class = "table table-sm mb-1",
+        tags$tr(tags$th("Column"), tags$th("Add it when"), tags$th("Model")),
+        fb(tags$code("Pair"), paste("Lines come in matched pairs (parental and corrected clone). Compares",
+           "within pairs, so shared genetic background drops out: more power."), model("(1|Pair)")),
+        fb(tags$code("Coverslip"), paste("Several coverslips per culture batch (Batch = culture batch).",
+           "Cells on one coverslip are more alike; without it they count as independent."),
+           model("(1|Line:Batch:Coverslip)")),
+        fb(tags$code("Run"), paste("A second batch source on top of the culture batch: a recording day",
+           "or plate shared by lines. Removes day or plate shifts."), model("(1|Run) + (1|Line:Run)"))),
+      p(class = "small text-muted", "Each term is added only if the data can estimate it. The base follows",
+        "the batch design picked in the sidebar; the sidebar also shows the model for your file.")),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own model."),
@@ -971,6 +982,7 @@ ui <- page_sidebar(
       .mmc-steps { display: flex; flex-wrap: wrap; gap: .4rem; align-items: stretch; }
       .mmc-step { border: 1px solid #dee2e6; border-radius: .5rem; padding: .4rem .6rem; flex: 1 1 110px; max-width: 160px; }
       .mmc-pic { display: block; width: 100%; max-width: 340px; margin: 2px 0; }
+      .mmc-add { color: #0F6E56; font-weight: 700; background: #e3f1ed; border-radius: 3px; padding: 0 3px; }
       .mmc-flow { display: block; width: 100%; max-width: 620px; margin: 4px 0 4px; }
       .mmc-designs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
       .mmc-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: .25rem; }

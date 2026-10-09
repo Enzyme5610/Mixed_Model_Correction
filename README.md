@@ -117,11 +117,15 @@ falls back to nested.
 
 **Optional columns**, used by exact name:
 
-- **Pair:** matched lines (e.g. parental and corrected clone). Adds `(1 | Pair)`.
-- **Coverslip:** coverslips within each culture batch (Batch = culture
-  batch). Adds `(1 | Line:Batch:Coverslip)`.
-- **Run:** a second batch source shared by lines (plate, recording day) when
-  Batch is the culture batch. Adds `(1 | Run) + (1 | Line:Run)`.
+- **Pair:** lines come in matched pairs (e.g. parental and corrected clone).
+  Compares within pairs, so shared genetic background drops out (more power).
+  Model: `parameter ~ Tx + (1 | Line/Batch) + (1 | Pair)`.
+- **Coverslip:** several coverslips per culture batch (Batch = culture batch).
+  Cells on one coverslip are more alike; without it they count as independent.
+  Model: `parameter ~ Tx + (1 | Line/Batch) + (1 | Line:Batch:Coverslip)`.
+- **Run:** a second batch source on top of the culture batch: a recording day
+  or plate shared by lines. Removes day or plate shifts. Model:
+  `parameter ~ Tx + (1 | Line/Batch) + (1 | Run) + (1 | Line:Run)`.
 
 Each term is added only when the data can estimate it.
 
