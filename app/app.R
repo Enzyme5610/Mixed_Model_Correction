@@ -716,7 +716,8 @@ welcome_page <- function() {
         div(strong("Crossed (most qPCR)"), p(class = "small mb-0",
           "A plate, or a recording day, that held several lines and was repeated on other",
           "days. Number the shared runs B1, B2… or use the plate ID. Lines don't need",
-          "to be in every run, but some runs must hold more than one line.")),
+          "to be in every run, but some runs must hold more than one line. Also when",
+          "each line was on one plate only.")),
         crossed_pic(),
         div(batch_sheet(list(
           c("Control", "L1", "B1", "g"), c("AD", "L2", "B1", "g"),

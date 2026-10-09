@@ -41,6 +41,7 @@ AD,L5,B1,5.02,7.44
   repeated on other days (qPCR plate, or several lines recorded the same day).
   Number the shared runs B1, B2 (or use the plate ID or date); the same label
   must mean the same run for every line. Lines don't need to be in every run.
+  Also when each line was on one plate only.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
