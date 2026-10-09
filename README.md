@@ -1,12 +1,12 @@
 # Mixed Model Correction
 
-Nested model by default; the **Advanced designs** switch (sidebar) adds crossed
-and other designs ([Advanced designs](#advanced-designs)).
-
 Browser-based tool for testing treatment effects on physiology or qPCR data
 with a linear mixed model, accounting for Line and Batch variability.
 Includes pairwise comparisons and downloadable plots. No installation needed.
 Data is local to your platform (PC/Mac/Linux).
+
+Nested model by default; the **Advanced designs** switch (sidebar) adds crossed
+and other designs ([Advanced designs](#advanced-designs)).
 
 **App:** https://enzyme5610.github.io/Mixed_Model_Correction/
 
@@ -51,6 +51,11 @@ degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
 Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
 `emmeans`.
 
+**Allow line-specific treatment effects** (sidebar option, shown when the same line
+is in several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`. Each line
+can respond differently; the test then asks whether the effect holds across
+lines. Needs several lines.
+
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
 (e.g. gene panels). Adjusts Tx p-values across all parameters in a run.
 
@@ -62,9 +67,9 @@ Q-Q, residuals vs fitted) test the model's assumptions on the residuals.
 **Skewed data** (a few values much higher than the rest, e.g. event
 frequency): log10-transform values before upload. No 0 or negative values.
 
-**Batches shared by lines** (one qPCR plate with several lines) are corrected
-per line; the shared plate shift isn't separated. The crossed model is under
-[Advanced designs](#advanced-designs).
+**Several lines on one plate or day:** the nested model corrects each line's
+part of the plate as its own batch. The crossed model
+([Advanced designs](#advanced-designs)) also fits the plate's shared shift.
 
 The results table lists each parameter's random effects (fallbacks can differ
 between parameters).
@@ -108,8 +113,8 @@ The **Advanced designs** switch (sidebar) adds the following.
 **Crossed batch design** (some ephys, most qPCR): runs that held several lines
 and were repeated on other days (qPCR plate, or several lines recorded the
 same day). Number the shared runs B1, B2 (or use the plate ID or date); the
-same label must mean the same run for every line. Lines don't need to be in
-every run; also when each line was on one plate only. Model:
+same label must mean the same run for every line. A line can be in one run or
+several. Model:
 `parameter ~ Tx + (1 | Line) + (1 | Batch) + (1 | Line:Batch)`, the nested
 model plus a batch shift shared by lines. `(1 | Line:Batch)` is left out with
 one row per line per batch, or one batch per line. Without a shared batch it
@@ -133,6 +138,11 @@ Each term is added only when the data can estimate it.
 the group difference change between subsets? With names like `Ctrl_veh,
 Ctrl_drug, KO_veh, KO_drug` this is genotype × treatment. Needs 2+ lines per
 subset.
+
+**Comparisons:** all pairs (Tukey or Bonferroni), each group vs the reference
+(Dunnett), or selected pairs (Holm). Same model, no refit; tables and plot
+brackets show only the tested pairs. With each vs reference, the reference
+group decides which comparisons are tested.
 
 ## Credits
 

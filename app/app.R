@@ -16,6 +16,7 @@ prepare_data <- function(path) {
   # Levels in CSV order
   for (v in intersect(c("Tx", "Line", "Batch", opt_cols), names(datos)))
     datos[[v]] <- factor(datos[[v]], levels = unique(datos[[v]]))
+  if (nlevels(datos$Tx) < 2) stop("Tx must have at least two groups.")
   cols <- which(!original_names %in% c("Tx", "Line", "Batch", opt_cols) &
                 nzchar(trimws(original_names)))  # skip blank headers
   # Metadata (dates, IDs, wells) and constant columns aren't preselected
@@ -30,9 +31,12 @@ prepare_data <- function(path) {
 opt_cols <- c("Pair", "Coverslip", "Run")
 
 # Random effects; Advanced adds terms for optional columns
-random_term <- function(datos, design = "nested", extras = FALSE) {
+random_term <- function(datos, design = "nested", extras = FALSE, line_tx = FALSE) {
   rand <- base_term(datos, design)
-  if (extras) extra_terms(datos, rand) else rand
+  if (extras) rand <- extra_terms(datos, rand)
+  # Treatment effect may differ by line (same line in several groups)
+  if (line_tx) rand <- extra_terms(datos, rand, list(c("Line", "Tx")))
+  rand
 }
 
 # Pair, Coverslip within Line:Batch, Run and Line:Run, each only if estimable
@@ -72,8 +76,8 @@ base_term <- function(datos, design = "nested") {
   else stop("Something is wrong with the number of Lines or Batches. Please check your data.")
 }
 
-run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
-                       design = "nested", extras = FALSE) {
+run_models <- function(prep, vars, progress = function(n, label) NULL,
+                       design = "nested", extras = FALSE, line_tx = FALSE) {
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
@@ -82,7 +86,7 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
     # Lines/Batches counted where this parameter was measured
-    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, extras),
+    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, extras, line_tx),
                      error = function(e) stop("'", label, "': ", conditionMessage(e), call. = FALSE))
     f <- reformulate(c("Tx", rand), var)
     warn <- character()
@@ -92,8 +96,7 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
         anova_result <- stats::anova(MM_Form, type = "II", ddf = "Kenward-Roger")
         em <- emmeans(MM_Form, specs = "Tx", lmer.df = "kenward-roger")
         means <- as.data.frame(summary(em))
-        pw <- as.data.frame(summary(pairs(em, adjust = adjust), infer = TRUE))
-        list(MM_Form = MM_Form, anova = anova_result, means = means, pairs = pw)
+        list(MM_Form = MM_Form, anova = anova_result, means = means, em = em)
       }, error = function(e) {
         stop("Model failed for '", label, "': ", conditionMessage(e), call. = FALSE)
       }),
@@ -111,13 +114,6 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
       row.names = NULL,
       check.names = FALSE
     )
-    res$pairs_table <- data.frame(
-      Parameter = label,
-      res$pairs,
-      DF_method = "Kenward-Roger",
-      P_adjust = adjust_label(adjust, nlevels(datos$Tx)),
-      check.names = FALSE
-    )
     res$var <- var
     res$label <- label
     res$rand <- rand
@@ -133,7 +129,29 @@ run_models <- function(prep, vars, adjust, progress = function(n, label) NULL,
 
 adjust_label <- function(adjust, k) {
   if (k <= 2) return("none (one comparison)")
-  c(tukey = "Tukey", bonferroni = "Bonferroni")[[adjust]]
+  c(tukey = "Tukey", bonferroni = "Bonferroni", dunnett = "Dunnett", holm = "Holm")[[adjust]]
+}
+
+# Comparisons from the model's means: all pairs, each vs reference (Dunnett) or selected pairs
+comparisons <- function(res, mode = "all", adjust = "tukey", ref = NULL, sel = NULL) {
+  lev <- as.character(res$means$Tx)
+  prs <- combn(lev, 2)  # emmeans pair order
+  keep <- paste(prs[1, ], prs[2, ], sep = "|") %in% sel
+  if (mode == "ref") {
+    k <- if (isTRUE(ref %in% lev)) match(ref, lev) else 1
+    ct <- emmeans::contrast(res$em, "trt.vs.ctrl", ref = k, adjust = "dunnettx")
+    a <- lev[-k]; b <- rep(lev[k], length(a))
+  } else if (mode == "sel" && any(keep)) {
+    a <- prs[1, keep]; b <- prs[2, keep]
+    m <- setNames(lapply(seq_along(a), function(i) (lev == a[i]) - (lev == b[i])), paste(a, "-", b))
+    ct <- emmeans::contrast(res$em, m, adjust = adjust)
+  } else {
+    ct <- pairs(res$em, adjust = adjust)  # all pairs (also when none are selected)
+    a <- prs[1, ]; b <- prs[2, ]
+  }
+  pw <- as.data.frame(summary(ct, infer = TRUE))
+  pw$.a <- a; pw$.b <- b
+  pw
 }
 
 # ---- Plot --------------------------------------------------------------------
@@ -436,10 +454,10 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
 
   draw_err(xe, st, opt)
 
-  # Brackets; emmeans pair order matches combn on model levels
-  prs <- combn(k, 2)
+  # Brackets for the tested pairs
   for (i in seq_len(n_pairs)) {
-    a <- min(pos[prs[, i]]); b <- max(pos[prs[, i]])
+    ab <- pos[match(c(pw$.a[i], pw$.b[i]), lev)]
+    a <- min(ab); b <- max(ab)
     yb <- rng[2] + h * (0.06 + 0.1 * (i - 1))
     tick <- h * 0.02
     segments(c(a, a, b), c(yb - tick, yb, yb), c(a, b, b), c(yb, yb, yb - tick))
@@ -539,11 +557,10 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
     }
     draw_err(xm + if (opt$type == "box") w * 0.35 else 0, st, opt, half = w * 0.3)
 
-    # Brackets at one shared height; emmeans pair order matches combn on model levels
+    # Brackets for the tested pairs, at one shared height
     pw <- results[[i]]$pairs
-    prs <- combn(levels(datos$Tx), 2)
     for (p in seq_len(n_pairs)) {
-      xa <- sort(i + off[match(prs[, p], ord)])
+      xa <- sort(i + off[match(c(pw$.a[p], pw$.b[p]), ord)])
       yb <- rng[2] + h * (0.04 + 0.08 * (p - 1))
       segments(c(xa[1], xa[1], xa[2]), c(yb - h * 0.015, yb, yb),
                c(xa[1], xa[2], xa[2]), c(yb, yb, yb - h * 0.015))
@@ -770,12 +787,12 @@ welcome_page <- function() {
       "t-test and one-way ANOVA for this kind of data. Runs in your browser; your",
       "data stays on your computer."),
     h5(class = "mt-4", "How to use"),
+    div(class = "mmc-steps",
+      step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
+      step("2", "Parameters", "Numeric columns preselected"), arrow,
+      step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
+      step("4", "Run models", "Results and plots open in the tabs")),
     conditionalPanel("!input.advanced",
-      div(class = "mmc-steps",
-        step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
-        step("2", "Parameters", "Numeric columns preselected"), arrow,
-        step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
-        step("4", "Run models", "Results and plots open in the tabs")),
       h5(class = "mt-4", "Batches"),
       p("One file should be related to one experiment. Batch = your main batch source: the culture",
         "batch if you track it, otherwise the coverslip or plate. Number each line's batches B1, B2."),
@@ -785,23 +802,10 @@ welcome_page <- function() {
         c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
         "Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each.",
         "(1|Line/Batch)")),
-      p(class = "small text-muted mt-2", "Two batch sources (e.g. culture batch and coverslip):",
-        "Advanced designs. Same line in both groups (KD, OE, drug)? Use the same line label."),
-      h5(class = "mt-4", "Which model runs"),
-      tags$table(class = "table table-sm w-auto mb-1",
-        tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
-        fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Tx + (1|Line/Batch)")),
-        fb("≥ 2", "1 per line", tags$code("y ~ Tx + (1|Line)")),
-        fb("1", "≥ 2", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
-        fb("1", "1", "Can't be tested")),
-      p(class = "small text-muted", "y = one parameter.")),
+      p(class = "small text-muted mt-2", "One plate or day with several lines, or two batch sources",
+        "(e.g. culture batch and coverslip): Advanced designs. Same line in both groups (KD, OE, drug)?",
+        "Use the same line label; the sidebar then offers \u201cAllow line-specific treatment effects\u201d.")),
     conditionalPanel("input.advanced",
-      div(class = "mmc-steps",
-        step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
-        step("2", "Parameters", "Numeric columns preselected"), arrow,
-        step("", "Batch design", "Advanced: nested or crossed"), arrow,
-        step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
-        step("4", "Run models", "Results and plots open in the tabs")),
       h5(class = "mt-4", "Batch design (Advanced)"),
       p("Pick the experiment design. One file should be related to one experiment. Batch = your main",
         "batch source: the culture batch if you track it, otherwise the coverslip or plate."),
@@ -824,9 +828,8 @@ welcome_page <- function() {
         div(class = "border rounded p-2 mmc-card",
           div(strong("Crossed (some ephys, most qPCR)"), p(class = "small mb-0",
             "A plate, or a recording day, that held several lines and was repeated on other",
-            "days. Number the shared runs B1, B2… or use the plate ID. Lines don't need",
-            "to be in every run, but some runs must hold more than one line. Also when",
-            "each line was on one plate only.")),
+            "days. Number the shared runs B1, B2… or use the plate ID. A line can be in",
+            "one run or several, but some runs must hold more than one line.")),
           crossed_pic(),
           div(batch_sheet(list(
             c("Control", "L1", "B1", "g"), c("AD", "L2", "B1", "g"),
@@ -834,24 +837,24 @@ welcome_page <- function() {
             c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
             "B1 is one day or plate for every line.",
             "(1|Line) + (1|Batch) + (1|Line:Batch)")))),
-      p(class = "small text-muted", "Coverslips within culture batches, or a second shared batch",
-        "source: optional columns below. Same line in both groups (KD, OE, drug)? Use the same line",
-        "label; either design works."),
-      h5(class = "mt-4", "Which model runs"),
-      tags$table(class = "table table-sm w-auto mb-1",
-        tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Design"), tags$th("Model")),
-        fb("≥ 2", "≥ 2, shared by lines", "Crossed", tags$code("y ~ Tx + (1|Line) + (1|Batch) + (1|Line:Batch)")),
-        fb("≥ 2", "≥ 2 in a line", "Nested", tags$code("y ~ Tx + (1|Line/Batch)")),
-        fb("≥ 2", "1 per line", "Either", tags$code("y ~ Tx + (1|Line)")),
-        fb("1", "≥ 2", "Either", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
-        fb("1", "1", "Either", "Can't be tested")),
-      p(class = "small text-muted", "y = one parameter. Crossed with no shared batch runs as Nested.",
-        "(1|Line:Batch) is left out with one row per line per batch, or one batch per line.",
-        "Optional columns below add their terms."),
+      p(class = "small text-muted", "Same line in both groups (KD, OE, drug)? Use the same line label;",
+        "either design works, and the sidebar offers \u201cAllow line-specific treatment effects\u201d.")),
+    h5(class = "mt-4", "Which model runs"),
+    tags$table(class = "table table-sm w-auto mb-1",
+      tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
+      tags$tr(`data-display-if` = "input.advanced", `data-ns-prefix` = "", tags$td("≥ 2"),
+        tags$td("≥ 2, shared by lines (Crossed)"), tags$td(tags$code("y ~ Tx + (1|Line) + (1|Batch) + (1|Line:Batch)"))),
+      fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Tx + (1|Line/Batch)")),
+      fb("≥ 2", "1 per line", tags$code("y ~ Tx + (1|Line)")),
+      fb("1", "≥ 2", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
+      fb("1", "1", "Can't be tested")),
+    p(class = "small text-muted", "y = one parameter.", tags$span(`data-display-if` = "input.advanced",
+      `data-ns-prefix` = "", "Crossed with no shared batch runs as Nested.")),
+    conditionalPanel("input.advanced",
       h5(class = "mt-4", "More designs (optional columns)"),
       p(class = "small", "If your experiment has one of these structures, add a column with this exact",
-        "name. The model then accounts for it instead of treating those cells as independent. Used only",
-        "with Advanced designs on. ", tags$span(class = "mmc-add", "Highlighted"), ": what the column adds."),
+        "name. The model then accounts for it instead of treating those cells as independent.",
+        tags$span(class = "mmc-add", "Highlighted", .noWS = "after"), ": what the column adds."),
       tags$table(class = "table table-sm mb-1",
         tags$tr(tags$th("Column"), tags$th("Add it when"), tags$th("Model")),
         fb(tags$code("Pair"), paste("Lines come in matched pairs (parental and corrected clone). Compares",
@@ -861,8 +864,12 @@ welcome_page <- function() {
            model("(1|Line:Batch:Coverslip)")),
         fb(tags$code("Run"), paste("A second batch source on top of the culture batch: a recording day",
            "or plate shared by lines. Removes day or plate shifts."), model("(1|Run) + (1|Line:Run)"))),
-      p(class = "small text-muted", "Each term is added only if the data can estimate it. The base follows",
-        "the batch design picked in the sidebar; the sidebar also shows the model for your file.")),
+      p(class = "small text-muted", "Each term is added only if the data can estimate it; the sidebar",
+        "shows the model for your file."),
+      h5(class = "mt-4", "Comparisons"),
+      p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
+        "selected pairs (Holm). Tables and plot brackets show only the tested pairs. With each vs",
+        "reference, the reference group decides which comparisons are tested.")),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own model."),
@@ -887,12 +894,7 @@ welcome_page <- function() {
     h5(class = "mt-4", "Not covered"),
     tags$ul(class = "small",
       tags$li("Data: small counts, percentages near 0 or 100%, scores, omics, skewed data with zeros"),
-      tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Designs: batches shared by lines (one qPCR plate with several",
-        "lines; corrected per line only), two batch sources, extra levels (e.g. coverslips within culture",
-        "batches), genotype \u00d7 treatment, matched pairs: Advanced designs. Repeated measures per",
-        "cell: not yet."),
-      tags$li(`data-display-if` = "input.advanced", `data-ns-prefix` = "", "Designs: repeated measures per cell (input-output curves, time courses)"),
-      NULL),
+      tags$li("Designs: repeated measures per cell (input-output curves, time courses)")),
     p(class = "small text-muted", "Full details: ",
       tags$a(href = "https://github.com/Enzyme5610/Mixed_Model_Correction", "README")))
 }
@@ -1003,13 +1005,25 @@ ui <- page_sidebar(
       radioButtons("design", "Batch design",
         choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (some ephys, most qPCR)" = "crossed"))),
     uiOutput("design_note"),
+    uiOutput("line_tx_ui"),
     hr(),
-    radioButtons("adjust", "3. Pairwise p-value adjustment",
-                 choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
+    conditionalPanel("input.advanced",
+      radioButtons("cmp", "3. Comparisons", choices = c(
+        "All pairs" = "all", "Each vs reference (Dunnett)" = "ref", "Selected pairs (Holm)" = "sel"))),
+    conditionalPanel("!input.advanced || input.cmp == 'all'",
+      radioButtons("adjust", tagList(tags$span(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "3."),
+                                     "Pairwise p-value adjustment"),
+                   choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni"))),
+    conditionalPanel("input.advanced && input.cmp == 'sel'",
+      selectizeInput("sel_pairs", "Pairs to test", choices = NULL, multiple = TRUE,
+                     options = list(plugins = list("remove_button"), placeholder = "All pairs"))),
     helpText("With only two treatment groups there is a single comparison,",
-             "so both give the same p-value."),
+             "so every adjustment gives the same p-value."),
     selectInput("ref", "Reference (control) group", choices = NULL),
-    helpText("Sets comparison direction in tables and plots; p-values don't change."),
+    conditionalPanel("!(input.advanced && input.cmp == 'ref')",
+      helpText("Sets comparison direction in tables and plots; p-values don't change.")),
+    conditionalPanel("input.advanced && input.cmp == 'ref'",
+      helpText("Each group is compared to this one; p-values depend on it.")),
     actionButton("run", "4. Run models", class = "btn-primary"),
     div(class = "small text-muted mt-3",
         "Original script: Dr. Luis Gustavo Hernandez Carballo", br(),
@@ -1143,7 +1157,12 @@ parameters (e.g. gene panels). Adjusts Tx p-values across all parameters in
 a run.
 
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
-The reference group sets direction only; p-values don't change.
+The reference group sets direction only; p-values don't change. Advanced:
+each vs reference (Dunnett) or selected pairs (Holm).
+
+**Allow line-specific treatment effects** (optional, when the same line is in
+several groups): adds `(1 | Line:Tx)`. Each line can respond differently; the
+test then asks whether the effect holds across lines. Needs several lines.
 
 **Advanced designs.** Optional columns Pair, Coverslip and Run add random
 terms when the data can estimate them; Split and combined adds a Group \u00d7
@@ -1185,6 +1204,9 @@ server <- function(input, output, session) {
                          choices = setNames(p$MM_Vars, p$parameter_labels),
                          selected = p$MM_Vars[p$numeric])
     lev <- levels(p$datos$Tx)
+    prs <- combn(lev, 2)
+    updateSelectizeInput(session, "sel_pairs", selected = character(),
+      choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"), paste(prs[1, ], "vs", prs[2, ])))
     ctrl <- grep("^(control|ctrl|gfp)", lev, ignore.case = TRUE, value = TRUE)
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
@@ -1198,14 +1220,33 @@ server <- function(input, output, session) {
     prev_type(input$type)
   }, ignoreInit = TRUE)
 
-  design <- function() if (isTRUE(input$advanced)) input$design else "nested"
+  design <- function() if (isTRUE(input$advanced) && !is.null(input$design)) input$design else "nested"
   extras <- function() isTRUE(input$advanced)  # optional columns and interaction test
+  line_tx <- function() isTRUE(input$line_tx)
+  cmp_mode <- function() if (isTRUE(input$advanced) && !is.null(input$cmp)) input$cmp else "all"
+  cmp_adjust <- function() switch(cmp_mode(), ref = "dunnett", sel = "holm", input$adjust)
+  # One result with the chosen comparisons (tables and brackets)
+  with_cmp <- function(x, ref, sel = input$sel_pairs) {
+    x$pairs <- comparisons(x, cmp_mode(), cmp_adjust(), ref, sel)
+    x
+  }
+  # Selected pairs in pooled names (Split and combined)
+  pool_sel <- function() unique(vapply(strsplit(as.character(input$sel_pairs), "|", fixed = TRUE),
+                                       function(p) paste(pool_name(p), collapse = "|"), ""))
+
+  # Same line in several groups: optional line-specific treatment effect
+  output$line_tx_ui <- renderUI({
+    # File errors show in the model note instead
+    within <- tryCatch(with(prep()$datos, any(tapply(Tx, Line, function(t) length(unique(t))) > 1, na.rm = TRUE)),
+                       error = function(e) FALSE)
+    if (within) checkboxInput("line_tx", "Allow line-specific treatment effects", isolate(isTRUE(input$line_tx)))
+  })
 
   # Model that will run, with fallbacks
   output$design_note <- renderUI({
     if (is.null(input$file)) return(NULL)
     d <- prep()$datos
-    f <- tryCatch(random_term(d, design(), extras()), error = function(e) NULL)
+    f <- tryCatch(random_term(d, design(), extras(), line_tx()), error = function(e) NULL)
     div(class = "alert alert-info small py-1 px-2 mb-2",
       sprintf("%d line(s), %d batch(es). Model: ", nlevels(d$Line), nlevels(d$Batch)),
       if (is.null(f)) "can't be tested." else tags$code(f),
@@ -1235,11 +1276,10 @@ server <- function(input, output, session) {
     p <- prep()
     validate(need(length(input$params) > 0, "Select at least one parameter."))
     res <- withProgress(message = "Fitting models", value = 0,
-      tryCatch(run_models(p, input$params, input$adjust,
-                          function(n, label) incProgress(1 / n, detail = label),
-                          design = design(), extras = extras()),
+      tryCatch(run_models(p, input$params, function(n, label) incProgress(1 / n, detail = label),
+                          design = design(), extras = extras(), line_tx = line_tx()),
                error = function(e) validate(conditionMessage(e))))
-    list(res = res, prep = p, adjust = input$adjust, design = design(), extras = extras(),
+    list(res = res, prep = p, design = design(), extras = extras(), line_tx = line_tx(),
          base = tools::file_path_sans_ext(input$file$name))
   })
 
@@ -1330,25 +1370,31 @@ server <- function(input, output, session) {
     df
   })
 
+  # Chosen comparisons per result; redone when the choice changes, not on plot tweaks
+  cmp_res <- reactive(lapply(results()$res, with_cmp, ref = input$ref))
+  cmp_split <- reactive(lapply(split_all(), function(s) {
+    s$res <- lapply(s$res, with_cmp, ref = pool_name(input$ref), sel = pool_sel())
+    s
+  }))
+
   pairs_df <- reactive({
-    ro <- ref_order()
-    lev <- ro$lev; ref <- ro$ref
+    ref <- ref_order()$ref
+    tab <- function(x) cbind(x$pairs, DF_method = "Kenward-Roger",
+                             P_adjust = adjust_label(cmp_adjust(), nrow(x$means)))
     if (identical(input$pairs_view, "split")) {
-      s <- split_all()
+      s <- cmp_split(); ref <- pool_name(ref)
       df <- do.call(rbind, Map(function(p, x) do.call(rbind, lapply(x$res, function(r)
-        cbind(Parameter = p, Subset = r$label, r$pairs_table[-1]))), names(s), s))
-      lev <- levels(s[[1]]$prep$datos$Tx); ref <- pool_name(ref)
-    } else df <- do.call(rbind, lapply(results()$res, `[[`, "pairs_table"))
-    prs <- combn(lev, 2)  # emmeans pair order
-    i <- rep(seq_len(ncol(prs)), length.out = nrow(df))
-    flip <- prs[1, i] == ref
-    a <- ifelse(flip, prs[2, i], prs[1, i]); b <- ifelse(flip, prs[1, i], prs[2, i])
+        cbind(Parameter = p, Subset = r$label, tab(r)))), names(s), s))
+    } else df <- do.call(rbind, lapply(cmp_res(), function(x) cbind(Parameter = x$label, tab(x))))
+    flip <- df$.a == ref
+    a <- ifelse(flip, df$.b, df$.a); b <- ifelse(flip, df$.a, df$.b)
     df$contrast <- paste(a, "-", b)
     df$estimate <- ifelse(flip, -df$estimate, df$estimate)
     df$t.ratio <- ifelse(flip, -df$t.ratio, df$t.ratio)
     lo <- df$lower.CL
     df$lower.CL <- ifelse(flip, -df$upper.CL, lo)
     df$upper.CL <- ifelse(flip, -lo, df$upper.CL)
+    df$.a <- NULL; df$.b <- NULL
     # dCt data: fold change of the first group vs the second (2^-estimate)
     if (identical(input$scale, "fc")) {
       df$Fold_change <- 2^-df$estimate
@@ -1435,9 +1481,9 @@ server <- function(input, output, session) {
   })
 
   current <- reactive({
-    r <- results()
+    x <- cmp_res()
     req(input$plot_param)
-    r$res[[match(input$plot_param, vapply(r$res, `[[`, "", "label"))]]
+    x[[match(input$plot_param, vapply(x, `[[`, "", "label"))]]
   })
 
   opt <- reactive(list(type = input$type, layout = input$layout, dots = input$dots,
@@ -1463,9 +1509,9 @@ server <- function(input, output, session) {
     labels <- vapply(r$res, `[[`, "", "label")
     withProgress(message = "Fitting split models", value = 0,
       setNames(Map(function(sp, lab, x) {
-        res <- tryCatch(run_models(sp, sp$MM_Vars, r$adjust, function(n, label)
+        res <- tryCatch(run_models(sp, sp$MM_Vars, function(n, label)
                           incProgress(1 / (n * length(sps)), detail = paste(lab, label)),
-                          r$design, r$extras),
+                          r$design, r$extras, r$line_tx),
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
         inter <- if (isTRUE(r$extras)) tryCatch(split_interaction(r$prep, x$var, lab, r$design, TRUE),
                                                 error = function(e) NULL)
@@ -1475,17 +1521,19 @@ server <- function(input, output, session) {
 
   # Current figure: one parameter, all selected in one figure, or split and combined
   draw_current <- function(r) {
+    adj <- cmp_adjust()
     if (identical(input$fig, "all")) {
-      sel <- r$res[vapply(r$res, `[[`, "", "label") %in% input$multi]
+      x <- cmp_res()
+      sel <- x[vapply(x, `[[`, "", "label") %in% input$multi]
       validate(need(length(sel) > 0, "Select at least one parameter."))
-      draw_multi(r$prep$datos, sel, r$adjust, opt())
+      draw_multi(r$prep$datos, sel, adj, opt())
     } else if (identical(input$fig, "split")) {
-      s <- split_all()[[input$plot_param]]
+      s <- cmp_split()[[input$plot_param]]
       o <- opt()
       o$ref <- pool_name(o$ref)
       o$order <- unique(pool_name(unlist(o$order)))
-      draw_multi(s$prep$datos, s$res, r$adjust, o, main = input$plot_param)
-    } else draw_plot(r$prep$datos, current(), r$adjust, opt())
+      draw_multi(s$prep$datos, s$res, adj, o, main = input$plot_param)
+    } else draw_plot(r$prep$datos, current(), adj, opt())
   }
 
   output$plot <- renderPlot(
@@ -1538,7 +1586,7 @@ server <- function(input, output, session) {
     save_file(name, f$type, function(file) {
       f$open(file, d[["w"]], d[["h"]])
       on.exit(dev.off())
-      if (input$dl_plot == "pdf_all") for (x in r$res) draw_plot(r$prep$datos, x, r$adjust, opt())
+      if (input$dl_plot == "pdf_all") for (x in cmp_res()) draw_plot(r$prep$datos, x, cmp_adjust(), opt())
       else draw_current(r)
     })
   })
