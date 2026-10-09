@@ -257,11 +257,10 @@ batch_shift <- function(datos, res) {
 # What batch-adjusted values remove, by model
 adj_text <- function(rand) {
   if (grepl("(1|Batch)", rand, fixed = TRUE) && grepl("Line", rand))
-    paste0("Each run's shared shift", if (grepl("Line:Batch", rand, fixed = TRUE))
-      " and each line's shift within it", " removed.")
-  else if (grepl("Line/Batch", rand, fixed = TRUE)) "Each line's batches aligned to that line's average."
-  else if (rand == "(1|Batch)") "Each batch's shift removed (one line)."
-  else "No batch term in this model; nothing to adjust."
+    if (grepl("Line:Batch", rand, fixed = TRUE)) "Run shifts removed, shared and per line." else "Run shifts removed."
+  else if (grepl("Line/Batch", rand, fixed = TRUE)) "Batch shifts removed within each line."
+  else if (rand == "(1|Batch)") "Batch shifts removed."
+  else "No batch term; nothing to adjust."
 }
 
 # Display values, center and error bars for one parameter
@@ -804,7 +803,7 @@ welcome_page <- function() {
         "(1|Line/Batch)")),
       p(class = "small text-muted mt-2", "One plate or day with several lines, or two batch sources",
         "(e.g. culture batch and coverslip): Advanced designs. Same line in both groups (KD, OE, drug)?",
-        "Use the same line label; the sidebar then offers \u201cAllow line-specific treatment effects\u201d.")),
+        "Use the same line label; Advanced designs then offers \u201cAllow line-specific treatment effects\u201d.")),
     conditionalPanel("input.advanced",
       h5(class = "mt-4", "Batch design (Advanced)"),
       p("Pick the experiment design. One file should be related to one experiment. Batch = your main",
@@ -836,9 +835,7 @@ welcome_page <- function() {
             c("Control", "L3", "B1", "g"), c("Control", "L1", "B2", "p"),
             c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
             "B1 is one day or plate for every line.",
-            "(1|Line) + (1|Batch) + (1|Line:Batch)")))),
-      p(class = "small text-muted", "Same line in both groups (KD, OE, drug)? Use the same line label;",
-        "either design works, and the sidebar offers \u201cAllow line-specific treatment effects\u201d.")),
+            "(1|Line) + (1|Batch) + (1|Line:Batch)"))))),
     h5(class = "mt-4", "Which model runs"),
     tags$table(class = "table table-sm w-auto mb-1",
       tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
@@ -866,6 +863,11 @@ welcome_page <- function() {
            "or plate shared by lines. Removes day or plate shifts."), model("(1|Run) + (1|Line:Run)"))),
       p(class = "small text-muted", "Each term is added only if the data can estimate it; the sidebar",
         "shows the model for your file."),
+      h5(class = "mt-4", "Same line in several groups"),
+      p(class = "small mb-1", "Same line in both groups (KD, OE, drug)? Use the same line label. The sidebar",
+        "then shows \u201cAllow line-specific treatment effects\u201d: each line can respond differently, and the",
+        "test asks whether the effect holds across lines. Needs several lines."),
+      p(class = "small", model("(1|Line:Tx)")),
       h5(class = "mt-4", "Comparisons"),
       p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
         "selected pairs (Holm). Tables and plot brackets show only the tested pairs. With each vs",
@@ -1005,7 +1007,7 @@ ui <- page_sidebar(
       radioButtons("design", "Batch design",
         choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (some ephys, most qPCR)" = "crossed"))),
     uiOutput("design_note"),
-    uiOutput("line_tx_ui"),
+    conditionalPanel("input.advanced", uiOutput("line_tx_ui")),
     hr(),
     conditionalPanel("input.advanced",
       radioButtons("cmp", "3. Comparisons", choices = c(
@@ -1160,7 +1162,7 @@ a run.
 The reference group sets direction only; p-values don't change. Advanced:
 each vs reference (Dunnett) or selected pairs (Holm).
 
-**Allow line-specific treatment effects** (optional, when the same line is in
+**Allow line-specific treatment effects** (Advanced, when the same line is in
 several groups): adds `(1 | Line:Tx)`. Each line can respond differently; the
 test then asks whether the effect holds across lines. Needs several lines.
 
@@ -1222,7 +1224,7 @@ server <- function(input, output, session) {
 
   design <- function() if (isTRUE(input$advanced) && !is.null(input$design)) input$design else "nested"
   extras <- function() isTRUE(input$advanced)  # optional columns and interaction test
-  line_tx <- function() isTRUE(input$line_tx)
+  line_tx <- function() isTRUE(input$advanced) && isTRUE(input$line_tx)
   cmp_mode <- function() if (isTRUE(input$advanced) && !is.null(input$cmp)) input$cmp else "all"
   cmp_adjust <- function() switch(cmp_mode(), ref = "dunnett", sel = "holm", input$adjust)
   # One result with the chosen comparisons (tables and brackets)
@@ -1421,9 +1423,7 @@ server <- function(input, output, session) {
     sel <- if (is.null(r)) NULL else if (identical(input$fig, "all"))
       r$res[vapply(r$res, `[[`, "", "label") %in% input$multi] else list(current())
     msg <- unique(vapply(sel, function(x) adj_text(x$rand), ""))
-    helpText(if (length(msg) == 1) msg else "Dots minus each batch's estimated shift.",
-             "Statistics are unchanged; don't re-test adjusted values. SEM/SD shrink; model",
-             "CI shows the test's uncertainty.")
+    helpText(if (length(msg) == 1) msg else "Batch shifts removed.", "Display only.")
   })
 
   output$resid_plot <- renderPlot({

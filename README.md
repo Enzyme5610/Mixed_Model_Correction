@@ -51,11 +51,6 @@ degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
 Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
 `emmeans`.
 
-**Allow line-specific treatment effects** (sidebar option, shown when the same line
-is in several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`. Each line
-can respond differently; the test then asks whether the effect holds across
-lines. Needs several lines.
-
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
 (e.g. gene panels). Adjusts Tx p-values across all parameters in a run.
 
@@ -133,6 +128,11 @@ falls back to nested.
   `parameter ~ Tx + (1 | Line/Batch) + (1 | Run) + (1 | Line:Run)`.
 
 Each term is added only when the data can estimate it.
+
+**Allow line-specific treatment effects** (shown when the same line is in
+several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`. Each line can
+respond differently; the test then asks whether the effect holds across lines.
+Needs several lines.
 
 **Group × Subset interaction** (Pairwise tab, Split and combined view): does
 the group difference change between subsets? With names like `Ctrl_veh,
