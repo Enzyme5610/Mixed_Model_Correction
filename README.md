@@ -1,6 +1,7 @@
 # Mixed Model Correction
 
-Nested model by default; the **Advanced** switch (sidebar) adds crossed designs.
+Nested model by default; the **Advanced designs** switch (sidebar) adds crossed
+and other designs ([Advanced designs](#advanced-designs)).
 
 Browser-based tool for testing treatment effects on physiology or qPCR data
 with a linear mixed model, accounting for Line and Batch variability.
@@ -36,22 +37,15 @@ AD,L5,B1,5.02,7.44
   across groups for the same line.
 - **Batch:** your main batch source, a unit that can shift all its cells
   together: the culture batch if you track it, otherwise the coverslip or
-  plate. A second source (coverslips within culture batches, or a shared run)
-  needs Advanced designs.
-- **Nested** (default; most ephys, some qPCR): each batch belongs to one line
-  (culture batch, differentiation round, coverslip, or a qPCR plate that held
-  one line). Number each line's batches B1, B2. Different lines can all be B1.
-- **Crossed** (Advanced; some ephys, most qPCR): runs that held several lines and were
-  repeated on other days (qPCR plate, or several lines recorded the same day).
-  Number the shared runs B1, B2 (or use the plate ID or date); the same label
-  must mean the same run for every line. Lines don't need to be in every run.
-  Also when each line was on one plate only.
+  plate. Number each line's batches B1, B2; different lines can all be B1.
+  A second source (coverslips within culture batches, or a shared run) needs
+  Advanced designs.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
 ## Model
 
-`parameter ~ Tx + (1 | Line/Batch)` (nested), fit with
+`parameter ~ Tx + (1 | Line/Batch)` (nested; most ephys, some qPCR), fit with
 `lmerTest::lmer`, with Tx tested by a Type II F test using Kenward-Roger
 degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
 Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
@@ -68,12 +62,12 @@ Q-Q, residuals vs fitted) test the model's assumptions on the residuals.
 **Skewed data** (a few values much higher than the rest, e.g. event
 frequency): log10-transform values before upload. No 0 or negative values.
 
-**Crossed** (Advanced) uses `parameter ~ Tx + (1 | Line) + (1 | Batch) + (1 |
-Line:Batch)` when several lines shared a batch (e.g. one qPCR plate): the
-nested model plus a batch shift shared by lines. `(1 | Line:Batch)` is left
-out with one row per line per batch, or one batch per line. Batch labels must
-then mean the same run for every line. Without a shared batch it falls back
-to nested.
+**Batches shared by lines** (one qPCR plate with several lines) are corrected
+per line; the shared plate shift isn't separated. The crossed model is under
+[Advanced designs](#advanced-designs).
+
+The results table lists each parameter's random effects (fallbacks can differ
+between parameters).
 
 ## Plots
 
@@ -84,8 +78,8 @@ Statistics always use the values as entered.
 
 **Batch-adjusted values** (optional) subtract each batch's estimated shift
 from the plotted values, using the model's random-effect estimates (BLUPs).
-When used with crossed model: removes each run's shared shift and each line's shift within it.
-When used with nested model: each line's batch-to-batch deviation. 
+With the nested model: each line's batch-to-batch deviation. With the crossed
+model (Advanced): each run's shared shift and each line's shift within it.
 For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
 
 A reference (control) group sets the comparison direction in tables and plots.
@@ -104,12 +98,24 @@ one shared Y axis, with the groups next to each other for each parameter.
 **Split and combined** (Plots and Pairwise tabs): groups named like `Ctrl_M,
 Ctrl_F, KO_M, KO_F` are split at the last `_`. Ctrl vs KO is fit within each
 subset (M, F) and on all cells (Combined), each its own model. Every group
-needs every subset. Does not test whether subsets differ.
+needs every subset. Does not test whether subsets differ (Advanced designs
+adds that test).
 
 ## Advanced designs
 
-The **Advanced designs** switch (sidebar) adds the crossed batch design and
-optional columns, used by exact name:
+The **Advanced designs** switch (sidebar) adds the following.
+
+**Crossed batch design** (some ephys, most qPCR): runs that held several lines
+and were repeated on other days (qPCR plate, or several lines recorded the
+same day). Number the shared runs B1, B2 (or use the plate ID or date); the
+same label must mean the same run for every line. Lines don't need to be in
+every run; also when each line was on one plate only. Model:
+`parameter ~ Tx + (1 | Line) + (1 | Batch) + (1 | Line:Batch)`, the nested
+model plus a batch shift shared by lines. `(1 | Line:Batch)` is left out with
+one row per line per batch, or one batch per line. Without a shared batch it
+falls back to nested.
+
+**Optional columns**, used by exact name:
 
 - **Pair:** matched lines (e.g. parental and corrected clone). Adds `(1 | Pair)`.
 - **Coverslip:** coverslips within each culture batch (Batch = culture
@@ -117,9 +123,12 @@ optional columns, used by exact name:
 - **Run:** a second batch source shared by lines (plate, recording day) when
   Batch is the culture batch. Adds `(1 | Run) + (1 | Line:Run)`.
 
-Each term is added only when the data can estimate it. With Split and combined
-names (e.g. `Ctrl_veh, Ctrl_drug, KO_veh, KO_drug`), the Pairwise tab adds a
-Group × Subset interaction test (genotype × treatment).
+Each term is added only when the data can estimate it.
+
+**Group × Subset interaction** (Pairwise tab, Split and combined view): does
+the group difference change between subsets? With names like `Ctrl_veh,
+Ctrl_drug, KO_veh, KO_drug` this is genotype × treatment. Needs 2+ lines per
+subset.
 
 ## Credits
 
