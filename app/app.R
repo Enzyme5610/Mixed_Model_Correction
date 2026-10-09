@@ -573,17 +573,94 @@ coverage <- function(p, vars) {
   }))
 }
 
+# Welcome colors: one per batch
+sheet_cols <- c(g = "#0F6E56", p = "#534AB7", o = "#D85A30", b = "#185FA5",
+                y = "#854F0B", k = "#993556")
+
 # Mini spreadsheet; color = one run
-batch_sheet <- function(rows, caption, formula) {
-  cols <- c(g = "#0F6E56", p = "#534AB7", o = "#D85A30", b = "#185FA5",
-            y = "#854F0B", k = "#993556")
+batch_sheet <- function(rows, caption, formula = NULL, head = c("Tx", "Line", "Batch")) {
+  bg <- function(k) if (k %in% names(sheet_cols)) sheet_cols[[k]] else k
   tagList(
     tags$table(class = "mmc-sheet",
-      tags$tr(tags$th("Tx"), tags$th("Line"), tags$th("Batch")),
-      lapply(rows, function(r) tags$tr(style = paste0("background:", cols[[r[4]]]),
+      tags$tr(lapply(head, tags$th)),
+      lapply(rows, function(r) tags$tr(style = paste0("background:", bg(r[4])),
         tags$td(r[1]), tags$td(r[2]), tags$td(r[3])))),
-    tags$small(class = "text-muted d-block", caption),
-    tags$small(class = "text-muted font-monospace d-block", formula))
+    tags$small(class = "text-muted d-block", caption,
+      if (!is.null(formula)) tags$span(class = "font-monospace d-block", formula)))
+}
+
+# Welcome pictures (SVG): line labels above, batch labels below
+svg_pic <- function(...) HTML(paste0('<svg viewBox="0 0 300 112" class="mmc-pic" role="img">',
+                                     ..., "</svg>"))
+svg_text <- function(x, y, s, size = 9) paste(sprintf(
+  '<text x="%g" y="%g" font-size="%g" text-anchor="middle" fill="#444">%s</text>',
+  x, y, size, s), collapse = "")
+svg_bracket <- function(x1, x2, y, s) paste0(sprintf(
+  '<path d="M%g %gV%gH%gV%g" fill="none" stroke="#999"/>', x1, y + 4, y, x2, y + 4),
+  svg_text((x1 + x2) / 2, y - 3, s))
+
+# Coverslip: cells on a sunflower spiral (golden angle)
+coverslip <- function(cx, cy, col, lab, r = 26, n = 18) {
+  k <- seq_len(n); rr <- 0.85 * r * sqrt(k / n); a <- k * 2.39996
+  paste0(sprintf('<circle cx="%g" cy="%g" r="%g" fill="%s"/>', cx, cy, r, col),
+         paste(sprintf('<circle cx="%.1f" cy="%.1f" r="1.9" fill="#fff"/>',
+                       cx + rr * cos(a), cy + rr * sin(a)), collapse = ""),
+         svg_text(cx, cy + r + 11, lab))
+}
+
+# 96-well plate (8 x 12); columns 1-4, 5-8, 9-12 hold one line each (gap between)
+plate <- function(x, y, col, lab, lines) {
+  wx <- x + 8.4 + (0:11) * 9.2 + (0:11 %/% 4) * 5; wy <- y + 9 + (0:7) * 8.9
+  w <- expand.grid(i = 1:12, j = 1:8)
+  paste0(sprintf('<rect x="%g" y="%g" width="128" height="80" rx="5" fill="%s" stroke="%s"/>',
+                 x, y, tint(col, 0.15), col),
+         paste(sprintf('<circle cx="%.1f" cy="%.1f" r="3.4" fill="%s"/>', wx[w$i], wy[w$j], col),
+               collapse = ""),
+         svg_text(colMeans(matrix(wx, 4)), y - 4, lines, 8),
+         svg_text(x + 64, y + 92, lab))
+}
+
+nested_pic <- function() svg_pic(
+  svg_bracket(14, 126, 16, "L1"), svg_bracket(174, 286, 16, "L2"),
+  coverslip(42, 58, sheet_cols[["g"]], "B1"), coverslip(98, 58, sheet_cols[["p"]], "B2"),
+  coverslip(202, 58, sheet_cols[["o"]], "B1"), coverslip(258, 58, sheet_cols[["b"]], "B2"))
+
+crossed_pic <- function() svg_pic(
+  plate(10, 14, sheet_cols[["g"]], "B1 (plate A)", c("L1", "L2", "L3")),
+  plate(162, 14, sheet_cols[["p"]], "B2 (plate B)", c("L1", "L2", "L4")))
+
+split_cols <- c("#666666", hcl.colors(1, "Dark 3"))  # plot defaults: reference, next group
+split_pic <- function() {
+  cx <- c(60, 150, 240); h <- rbind(c(38, 42, 40), c(60, 54, 57))  # Combined = mean of M, F
+  bars <- paste(vapply(1:3, function(i) paste0(
+    paste(sprintf('<rect x="%g" y="%g" width="24" height="%g" fill="%s" stroke="#4d4d4d"/>',
+                  cx[i] + c(-26, 2), 90 - h[, i], h[, i], tint(split_cols, 0.3)), collapse = ""),
+    svg_text(cx[i] + c(-14, 14), 99, c("Ctrl", "KO"), 7),
+    svg_bracket(cx[i] - 14, cx[i] + 14, 80 - max(h[, i]), "p")), ""), collapse = "")
+  svg_pic('<path d="M20 90H290" stroke="#999"/>', bars,
+          svg_text(cx, 110, c("M", "F", "Combined")))
+}
+
+# Design flowchart: two yes/no questions
+flow_pic <- function() {
+  box <- function(x, w, l1, l2) paste0(sprintf(
+    '<rect x="%g" y="10" width="%g" height="50" rx="6" fill="#f8f9fa" stroke="#999"/>', x, w),
+    svg_text(x + w / 2, c(30, 48), c(l1, l2), 13))
+  pill <- function(x, y, s) paste0(sprintf(
+    '<rect x="%g" y="%g" width="100" height="32" rx="16" fill="#444"/>', x, y), sprintf(
+    '<text x="%g" y="%g" font-size="14" font-weight="600" text-anchor="middle" fill="#fff">%s</text>',
+    x + 50, y + 21, s))
+  arrow <- function(x1, y1, x2, y2, s, dx = 0, dy = -5) paste0(sprintf(
+    '<path d="M%g %gL%g %g" stroke="#666" marker-end="url(#mmc-ah)"/>', x1, y1, x2, y2),
+    svg_text((x1 + x2) / 2 + dx, (y1 + y2) / 2 + dy, s, 12))
+  HTML(paste0('<svg viewBox="0 0 600 135" class="mmc-flow" role="img">',
+    '<defs><marker id="mmc-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ',
+    'markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#666"/></marker></defs>',
+    box(10, 170, "Is your batch a plate", "or a recording day?"), arrow(180, 35, 238, 35, "Yes"),
+    box(240, 190, "Did one plate or day", "hold more than one line?"), arrow(430, 35, 488, 35, "Yes"),
+    pill(490, 19, "Crossed"),
+    arrow(95, 60, 95, 93, "No", 15, 5), pill(45, 95, "Nested"),
+    arrow(335, 60, 335, 93, "No", 15, 5), pill(285, 95, "Nested"), "</svg>"))
 }
 
 # Welcome tab: steps, batches, designs and fallbacks
@@ -591,7 +668,7 @@ welcome_page <- function() {
   step <- function(n, title, sub) div(class = "mmc-step",
     strong(n, " ", title), tags$small(class = "text-muted d-block", sub))
   arrow <- span(class = "mmc-arrow", "→")
-  fb <- function(data, model) tags$tr(tags$td(data), tags$td(model))
+  fb <- function(...) tags$tr(lapply(list(...), tags$td))
   div(class = "p-2", style = "max-width: 900px;",
     h3("Welcome to Mixed Model Correction!"),
     p("Tests treatment effects on cells grouped in lines and batches. Replaces the",
@@ -605,45 +682,65 @@ welcome_page <- function() {
       step("4", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
       step("5", "Run models", "Results and plots open in the tabs")),
     h5(class = "mt-4", "Batch design (step 3)"),
-    p("A batch is one run (one color below): one ephys recording day or one qPCR plate.",
-      "Pick the design by how the cells were run. One file = one experiment."),
-    div(class = "row g-3",
-      div(class = "col-md-6", div(class = "border rounded p-2 h-100",
-        strong("Nested"), p(class = "small mb-1",
-          "Each line run on its own. Number each line's runs B1, B2…"),
-        batch_sheet(list(
+    p("Pick the experiment design. One file should be related to one experiment."),
+    flow_pic(),
+    div(class = "mmc-designs",
+      div(class = "border rounded p-2 mmc-card",
+        div(strong("Nested (most ephys, some qPCR)"), p(class = "small mb-0",
+          "Each batch belongs to one line: culture batch, differentiation round, coverslip,",
+          "or a qPCR plate that held one line (plate confounded with line). Number each",
+          "line's batches B1, B2…")),
+        nested_pic(),
+        div(batch_sheet(list(
           c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
           c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
           c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
           "L2's B1 is not L1's B1. L3 and L4 have one batch each.",
           "(1|Line/Batch)"))),
-      div(class = "col-md-6", div(class = "border rounded p-2 h-100",
-        strong("Crossed"), p(class = "small mb-1",
-          "Lines run together. Number the shared runs B1, B2…"),
-        batch_sheet(list(
+      div(class = "border rounded p-2 mmc-card",
+        div(strong("Crossed (most qPCR)"), p(class = "small mb-0",
+          "A plate, or a recording day, that held several lines and was repeated on other",
+          "days. Number the shared runs B1, B2… or use the plate ID. Lines don't need",
+          "to be in every run, but some runs must hold more than one line.")),
+        crossed_pic(),
+        div(batch_sheet(list(
           c("Control", "L1", "B1", "g"), c("AD", "L2", "B1", "g"),
           c("Control", "L3", "B1", "g"), c("Control", "L1", "B2", "p"),
           c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
           "B1 is one day or plate for every line.",
           "(1|Line) + (1|Batch)")))),
-    p(class = "small text-muted", "Same line in both groups (KD, OE, drug)? Use the same line",
-      "label; either design works."),
+    p(class = "small text-muted", "One batch source per file: culture batch or plate, not",
+      "both. Same line in both groups (KD, OE, drug)? Use the same line label; either",
+      "design works."),
     h5(class = "mt-4", "Which model runs"),
-    tags$table(class = "table table-sm w-auto",
-      tags$tr(tags$th("Your data"), tags$th("Model used")),
-      fb("Crossed, lines share a batch", tags$code("(1|Line) + (1|Batch)")),
-      fb("Nested, some lines with repeat batches", tags$code("(1|Line/Batch)")),
-      fb("Several lines, one batch each", tags$code("(1|Line)")),
-      fb("One line, several batches", tagList(tags$code("(1|Batch)"), " (that line only)")),
-      fb("One line, one batch", "Can't be tested")),
+    tags$table(class = "table table-sm w-auto mb-1",
+      tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Step 3"), tags$th("Model")),
+      fb("≥ 2", "≥ 2, shared by lines", "Crossed", tags$code("y ~ Tx + (1|Line) + (1|Batch)")),
+      fb("≥ 2", "≥ 2 in a line", "Nested", tags$code("y ~ Tx + (1|Line/Batch)")),
+      fb("≥ 2", "1 per line", "Either", tags$code("y ~ Tx + (1|Line)")),
+      fb("1", "≥ 2", "Either", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
+      fb("1", "1", "Either", "Can't be tested")),
+    p(class = "small text-muted", "y = one parameter. Crossed with no shared batch runs as Nested."),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own",
-      "model. Plots and Pairwise tabs. Does not test whether M and F differ."),
+      "model. Does not test whether M and F differ."),
+    div(class = "mmc-designs",
+      div(class = "border rounded p-2 mmc-card",
+        div(strong("Your file")),
+        div(batch_sheet(list(
+          c("Ctrl_M", "Ctrl", "M", split_cols[1]), c("Ctrl_F", "Ctrl", "F", split_cols[1]),
+          c("KO_M", "KO", "M", split_cols[2]), c("KO_F", "KO", "F", split_cols[2])),
+          "Tx split at the last _.", head = c("Tx", "Group", "Subset"))),
+        div()),
+      div(class = "border rounded p-2 mmc-card",
+        div(strong("Plots and Pairwise: Split and combined")),
+        split_pic(),
+        div(tags$small(class = "text-muted", "One p-value per subset.")))),
     h5(class = "mt-4", "Not covered"),
     tags$ul(class = "small",
       tags$li("Data: small counts, percentages near 0 or 100%, scores, omics, skewed data with zeros"),
-      tags$li("Designs: two batch sources, extra levels (e.g. coverslip), genotype × treatment,",
+      tags$li("Designs: two batch sources, extra levels (e.g. coverslips within culture batches), genotype × treatment,",
               "repeated measures per cell, matched pairs")),
     p(class = "small text-muted", "Full details: ",
       tags$a(href = "https://github.com/Enzyme5610/Mixed_Model_Correction", "README")))
@@ -733,6 +830,11 @@ ui <- page_sidebar(
       .mmc-sheet td { color: #fff; font-weight: 600; border: 1px solid #fff; padding: 1px 6px; }
       .mmc-steps { display: flex; flex-wrap: wrap; gap: .4rem; align-items: stretch; }
       .mmc-step { border: 1px solid #dee2e6; border-radius: .5rem; padding: .4rem .6rem; flex: 1 1 110px; max-width: 160px; }
+      .mmc-pic { display: block; width: 100%; max-width: 340px; margin: 2px 0; }
+      .mmc-flow { display: block; width: 100%; max-width: 600px; margin: 4px 0 12px; }
+      .mmc-designs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      .mmc-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: .25rem; }
+      @media (max-width: 767.98px) { .mmc-designs { grid-template-columns: 1fr; } }
       .mmc-arrow { align-self: center; font-size: 1.4rem; color: #888; }
       #design .radio { margin-bottom: .6rem; }"),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
@@ -745,7 +847,7 @@ ui <- page_sidebar(
     uiOutput("param_warning"),
     hr(),
     radioButtons("design", "3. Batch design",
-      choices = c("Nested" = "nested", "Crossed" = "crossed")),
+      choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (most qPCR)" = "crossed")),
     uiOutput("design_note"),
     hr(),
     radioButtons("adjust", "4. Pairwise p-value adjustment",

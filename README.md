@@ -32,12 +32,15 @@ AD,L5,B1,5.02,7.44
 - **One file = one experiment** (same comparison, same measurement type).
 - **Line:** one label per actual cell line, e.g. its ID (C20300M). Same label
   across groups for the same line.
-- **Batch:** within a line, each separate run gets its own batch label. A
-  line's first run is B1, its second B2. Different lines can all be B1.
-- **Crossed** (step 3): only when several lines shared a run: one qPCR plate,
-  or several lines recorded the same day (ephys). Number the shared runs B1,
-  B2 (or use the plate ID or date); the same label must mean the same run for
-  every line.
+- **Batch:** a unit that can shift all its cells together. One batch source
+  per file: culture batch or plate, not both.
+- **Nested** (step 3, most ephys, some qPCR): each batch belongs to one line
+  (culture batch, differentiation round, coverslip, or a qPCR plate that held
+  one line). Number each line's batches B1, B2. Different lines can all be B1.
+- **Crossed** (step 3, most qPCR): runs that held several lines and were
+  repeated on other days (qPCR plate, or several lines recorded the same day).
+  Number the shared runs B1, B2 (or use the plate ID or date); the same label
+  must mean the same run for every line. Lines don't need to be in every run.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
 
