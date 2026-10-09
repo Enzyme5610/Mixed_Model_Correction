@@ -1,5 +1,7 @@
 # Mixed Model Correction
 
+Nested model by default; the **Advanced** switch (sidebar) adds crossed designs.
+
 Browser-based tool for testing treatment effects on physiology or qPCR data
 with a linear mixed model, accounting for Line and Batch variability.
 Includes pairwise comparisons and downloadable plots. No installation needed.
@@ -34,10 +36,10 @@ AD,L5,B1,5.02,7.44
   across groups for the same line.
 - **Batch:** a unit that can shift all its cells together. One batch source
   per file: culture batch or plate, not both.
-- **Nested** (step 3, most ephys, some qPCR): each batch belongs to one line
+- **Nested** (default; most ephys, some qPCR): each batch belongs to one line
   (culture batch, differentiation round, coverslip, or a qPCR plate that held
   one line). Number each line's batches B1, B2. Different lines can all be B1.
-- **Crossed** (step 3, most qPCR): runs that held several lines and were
+- **Crossed** (Advanced; some ephys, most qPCR): runs that held several lines and were
   repeated on other days (qPCR plate, or several lines recorded the same day).
   Number the shared runs B1, B2 (or use the plate ID or date); the same label
   must mean the same run for every line. Lines don't need to be in every run.
@@ -64,10 +66,12 @@ Q-Q, residuals vs fitted) test the model's assumptions on the residuals.
 **Skewed data** (a few values much higher than the rest, e.g. event
 frequency): log10-transform values before upload. No 0 or negative values.
 
-**Crossed** (step 3) uses `parameter ~ Tx + (1 | Line) + (1 | Batch)` when
-several lines shared a batch (e.g. one qPCR plate). Batch labels must then
-mean the same run for every line. Without a shared batch it falls back to
-nested.
+**Crossed** (Advanced) uses `parameter ~ Tx + (1 | Line) + (1 | Batch) + (1 |
+Line:Batch)` when several lines shared a batch (e.g. one qPCR plate): the
+nested model plus a batch shift shared by lines. `(1 | Line:Batch)` is left
+out with one row per line per batch, or one batch per line. Batch labels must
+then mean the same run for every line. Without a shared batch it falls back
+to nested.
 
 ## Plots
 
@@ -78,7 +82,7 @@ Statistics always use the values as entered.
 
 **Batch-adjusted values** (optional) subtract each batch's estimated shift
 from the plotted values, using the model's random-effect estimates (BLUPs).
-When used with crossed model: removes batch shifts.
+When used with crossed model: removes each run's shared shift and each line's shift within it.
 When used with nested model: each line's batch-to-batch deviation. 
 For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
 

@@ -31,12 +31,14 @@ random_term <- function(datos, design = "nested") {
   nl <- nlevels(datos$Line)
   nb <- nlevels(datos$Batch)
   if (nl > 1 && nb > 1) {
-    # Crossed needs a batch shared by lines
-    if (design == "crossed" && length(shared_batches(datos))) return("(1|Line) + (1|Batch)")
-    # Nested needs a line with repeat batches and replicates within them
+    # Line:Batch needs a line with repeat batches and replicates within them
     repeats <- any(tapply(datos$Batch, datos$Line, function(b) length(unique(b))) > 1, na.rm = TRUE)
     one_each <- all(table(interaction(datos$Line, datos$Batch, drop = TRUE)) == 1)
-    if (repeats && !one_each) "(1|Line/Batch)" else "(1|Line)"
+    lb <- repeats && !one_each
+    # Crossed (a batch shared by lines) = nested + a shared batch shift
+    if (design == "crossed" && length(shared_batches(datos)))
+      return(paste0("(1|Line) + (1|Batch)", if (lb) " + (1|Line:Batch)"))
+    if (lb) "(1|Line/Batch)" else "(1|Line)"
   }
   else if (nl > 1) "(1|Line)"
   else if (nb > 1) "(1|Batch)"
@@ -195,14 +197,25 @@ plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "li
                       err = "sem", center = "diamond",
                       rot = "auto", adj_batch = FALSE, outliers = TRUE)
 
-# Each row's estimated batch shift from the model (0 if no batch term)
+# Each row's estimated batch shift from the model, all batch terms summed (NULL if none)
 batch_shift <- function(datos, res) {
   re <- lme4::ranef(res$MM_Form)
-  key <- if ("Batch" %in% names(re)) list(re$Batch, as.character(datos$Batch))
-         else if ("Batch:Line" %in% names(re))
-           list(re[["Batch:Line"]], paste(datos$Batch, datos$Line, sep = ":"))
-  if (is.null(key)) return(NULL)
-  key[[1]][key[[2]], 1]
+  keys <- list(Batch = as.character(datos$Batch),
+               "Batch:Line" = paste(datos$Batch, datos$Line, sep = ":"),
+               "Line:Batch" = paste(datos$Line, datos$Batch, sep = ":"))
+  keys <- keys[names(keys) %in% names(re)]
+  if (!length(keys)) return(NULL)
+  Reduce(`+`, Map(function(k, n) re[[n]][k, 1], keys, names(keys)))
+}
+
+# What batch-adjusted values remove, by model
+adj_text <- function(rand) {
+  if (grepl("(1|Batch)", rand, fixed = TRUE) && grepl("Line", rand))
+    paste0("Each run's shared shift", if (grepl("Line:Batch", rand, fixed = TRUE))
+      " and each line's shift within it", " removed.")
+  else if (grepl("Line/Batch", rand, fixed = TRUE)) "Each line's batches aligned to that line's average."
+  else if (rand == "(1|Batch)") "Each batch's shift removed (one line)."
+  else "No batch term in this model; nothing to adjust."
 }
 
 # Display values, center and error bars for one parameter
@@ -608,16 +621,17 @@ coverslip <- function(cx, cy, col, lab, r = 26, n = 18) {
          svg_text(cx, cy + r + 11, lab))
 }
 
-# 96-well plate (8 x 12); columns 1-4, 5-8, 9-12 hold one line each (gap between)
-plate <- function(x, y, col, lab, lines) {
-  wx <- x + 8.4 + (0:11) * 9.2 + (0:11 %/% 4) * 5; wy <- y + 9 + (0:7) * 8.9
-  w <- expand.grid(i = 1:12, j = 1:8)
-  paste0(sprintf('<rect x="%g" y="%g" width="128" height="80" rx="5" fill="%s" stroke="%s"/>',
-                 x, y, tint(col, 0.15), col),
-         paste(sprintf('<circle cx="%.1f" cy="%.1f" r="3.4" fill="%s"/>', wx[w$i], wy[w$j], col),
+# 96-well plate (8 x 12) of width w centered at cx; columns 1-4, 5-8, 9-12 hold one line each
+plate <- function(cx, y, col, lab, lines, w = 128) {
+  k <- w / 128; x <- cx - w / 2
+  wx <- x + k * (8.4 + (0:11) * 9.2 + (0:11 %/% 4) * 5); wy <- y + k * (9 + (0:7) * 8.9)
+  g <- expand.grid(i = 1:12, j = 1:8)
+  paste0(sprintf('<rect x="%g" y="%g" width="%g" height="%g" rx="%g" fill="%s" stroke="%s"/>',
+                 x, y, w, 80 * k, 5 * k, tint(col, 0.15), col),
+         paste(sprintf('<circle cx="%.1f" cy="%.1f" r="%.2f" fill="%s"/>', wx[g$i], wy[g$j], 3.4 * k, col),
                collapse = ""),
-         svg_text(colMeans(matrix(wx, 4)), y - 4, lines, 8),
-         svg_text(x + 64, y + 92, lab))
+         svg_text(colMeans(matrix(wx, 4)), y - 3, lines, 8),
+         svg_text(cx, y + 80 * k + 10, lab))
 }
 
 # Small plate holding one line (nested qPCR)
@@ -640,9 +654,17 @@ nested_pic <- function() {
     svg_text(150, c(61, 124), c("ephys", "qPCR")))
 }
 
-crossed_pic <- function() svg_pic(
-  plate(10, 14, sheet_cols[["g"]], "B1 (plate A)", c("L1", "L2", "L3")),
-  plate(162, 14, sheet_cols[["p"]], "B2 (plate B)", c("L1", "L2", "L4")))
+# Several lines in one run: recording day (ephys) or plate (qPCR); one color per run
+crossed_pic <- function() {
+  x <- c(28, 66, 104, 196, 234, 272); g <- sheet_cols[["g"]]; p <- sheet_cols[["p"]]
+  lines <- c("L1", "L2", "L3"); lines2 <- c("L1", "L2", "L4")
+  svg_pic(h = 154,
+    paste(mapply(coverslip, x, 50, rep(c(g, p), each = 3), "", 16, 10), collapse = ""),
+    svg_text(x, 29, c(lines, lines2), 8),
+    svg_text(c(66, 234), 81, c("B1 (day 1)", "B2 (day 2)")),
+    plate(66, 100, g, "B1 (plate A)", lines, 66), plate(234, 100, p, "B2 (plate B)", lines2, 66),
+    svg_text(150, c(53, 124), c("ephys", "qPCR")))
+}
 
 split_cols <- c("#666666", hcl.colors(1, "Dark 3"))  # plot defaults: reference, next group
 split_pic <- function() {
@@ -658,9 +680,9 @@ split_pic <- function() {
 
 # Design flowchart: two yes/no questions
 flow_pic <- function() {
-  box <- function(x, w, l1, l2) paste0(sprintf(
+  box <- function(x, w, lines) paste0(sprintf(
     '<rect x="%g" y="10" width="%g" height="50" rx="6" fill="#f8f9fa" stroke="#999"/>', x, w),
-    svg_text(x + w / 2, c(30, 48), c(l1, l2), 13))
+    svg_text(x + w / 2, c(30, 48), lines, 13))
   pill <- function(x, y, s) paste0(sprintf(
     '<rect x="%g" y="%g" width="100" height="32" rx="16" fill="#444"/>', x, y), sprintf(
     '<text x="%g" y="%g" font-size="14" font-weight="600" text-anchor="middle" fill="#fff">%s</text>',
@@ -668,14 +690,15 @@ flow_pic <- function() {
   arrow <- function(x1, y1, x2, y2, s, dx = 0, dy = -5) paste0(sprintf(
     '<path d="M%g %gL%g %g" stroke="#666" marker-end="url(#mmc-ah)"/>', x1, y1, x2, y2),
     svg_text((x1 + x2) / 2 + dx, (y1 + y2) / 2 + dy, s, 12))
-  HTML(paste0('<svg viewBox="0 0 600 135" class="mmc-flow" role="img">',
+  HTML(paste0('<svg viewBox="0 0 620 150" class="mmc-flow" role="img">',
     '<defs><marker id="mmc-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ',
     'markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#666"/></marker></defs>',
-    box(10, 170, "Is your batch a plate", "or a recording day?"), arrow(180, 35, 238, 35, "Yes"),
-    box(240, 190, "Did one plate or day", "hold more than one line?"), arrow(430, 35, 488, 35, "Yes"),
-    pill(490, 19, "Crossed"),
-    arrow(95, 60, 95, 93, "No", 15, 5), pill(45, 95, "Nested"),
-    arrow(335, 60, 335, 93, "No", 15, 5), pill(285, 95, "Nested"), "</svg>"))
+    box(10, 210, c("Is your batch a plate", "or a recording day?")), arrow(220, 35, 268, 35, "Yes"),
+    box(270, 190, c("Did one plate or day", "hold more than one line?")),
+    arrow(460, 35, 508, 35, "Yes"), pill(510, 19, "Crossed"),
+    arrow(115, 60, 115, 93, "No", 15, 5), pill(65, 95, "Nested"),
+    svg_text(115, 143, "culture batch, coverslip", 11),
+    arrow(365, 60, 365, 93, "No", 15, 5), pill(315, 95, "Nested"), "</svg>"))
 }
 
 # Welcome tab: steps, batches, designs and fallbacks
@@ -686,57 +709,89 @@ welcome_page <- function() {
   fb <- function(...) tags$tr(lapply(list(...), tags$td))
   div(class = "p-2", style = "max-width: 900px;",
     h3("Welcome to Mixed Model Correction!"),
+    conditionalPanel("!input.advanced", p(class = "text-muted mb-2",
+      "Nested model. Crossed designs: Advanced switch in the sidebar.")),
+    conditionalPanel("input.advanced", p(class = "text-muted mb-2", "Advanced: nested and crossed models.")),
     p("Tests treatment effects on cells grouped in lines and batches. Replaces the",
       "t-test and one-way ANOVA for this kind of data. Runs in your browser; your",
       "data stays on your computer."),
     h5(class = "mt-4", "How to use"),
-    div(class = "mmc-steps",
-      step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
-      step("2", "Parameters", "Numeric columns preselected"), arrow,
-      step("3", "Batch design", "Nested unless lines shared a batch"), arrow,
-      step("4", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
-      step("5", "Run models", "Results and plots open in the tabs")),
-    h5(class = "mt-4", "Batch design (step 3)"),
-    p("Pick the experiment design. One file should be related to one experiment."),
-    flow_pic(),
-    div(class = "mmc-designs",
-      div(class = "border rounded p-2 mmc-card",
-        div(strong("Nested (most ephys, some qPCR)"), p(class = "small mb-0",
-          "Each batch belongs to one line: culture batch, differentiation round, coverslip,",
-          "or a qPCR plate that held one line (plate confounded with line). Number each",
-          "line's batches B1, B2…")),
-        nested_pic(),
-        div(batch_sheet(list(
-          c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
-          c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
-          c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
-          "L2's B1 is not L1's B1. L3 and L4 have one batch each.",
-          "(1|Line/Batch)"))),
-      div(class = "border rounded p-2 mmc-card",
-        div(strong("Crossed (most qPCR)"), p(class = "small mb-0",
-          "A plate, or a recording day, that held several lines and was repeated on other",
-          "days. Number the shared runs B1, B2… or use the plate ID. Lines don't need",
-          "to be in every run, but some runs must hold more than one line. Also when",
-          "each line was on one plate only.")),
-        crossed_pic(),
-        div(batch_sheet(list(
-          c("Control", "L1", "B1", "g"), c("AD", "L2", "B1", "g"),
-          c("Control", "L3", "B1", "g"), c("Control", "L1", "B2", "p"),
-          c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
-          "B1 is one day or plate for every line.",
-          "(1|Line) + (1|Batch)")))),
-    p(class = "small text-muted", "One batch source per file: culture batch or plate, not",
-      "both. Same line in both groups (KD, OE, drug)? Use the same line label; either",
-      "design works."),
-    h5(class = "mt-4", "Which model runs"),
-    tags$table(class = "table table-sm w-auto mb-1",
-      tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Step 3"), tags$th("Model")),
-      fb("≥ 2", "≥ 2, shared by lines", "Crossed", tags$code("y ~ Tx + (1|Line) + (1|Batch)")),
-      fb("≥ 2", "≥ 2 in a line", "Nested", tags$code("y ~ Tx + (1|Line/Batch)")),
-      fb("≥ 2", "1 per line", "Either", tags$code("y ~ Tx + (1|Line)")),
-      fb("1", "≥ 2", "Either", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
-      fb("1", "1", "Either", "Can't be tested")),
-    p(class = "small text-muted", "y = one parameter. Crossed with no shared batch runs as Nested."),
+    conditionalPanel("!input.advanced",
+      div(class = "mmc-steps",
+        step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
+        step("2", "Parameters", "Numeric columns preselected"), arrow,
+        step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
+        step("4", "Run models", "Results and plots open in the tabs")),
+      h5(class = "mt-4", "Batches"),
+      p("One file should be related to one experiment. Number each line's batches B1, B2",
+        "(culture batch, differentiation round, coverslip or qPCR plate)."),
+      div(style = "max-width: 420px;", batch_sheet(list(
+        c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
+        c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
+        c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
+        "Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each.",
+        "(1|Line/Batch)")),
+      p(class = "small text-muted mt-2", "One batch source per file: culture batch or plate, not",
+        "both. Same line in both groups (KD, OE, drug)? Use the same line label."),
+      h5(class = "mt-4", "Which model runs"),
+      tags$table(class = "table table-sm w-auto mb-1",
+        tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
+        fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Tx + (1|Line/Batch)")),
+        fb("≥ 2", "1 per line", tags$code("y ~ Tx + (1|Line)")),
+        fb("1", "≥ 2", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
+        fb("1", "1", "Can't be tested")),
+      p(class = "small text-muted", "y = one parameter.")),
+    conditionalPanel("input.advanced",
+      div(class = "mmc-steps",
+        step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
+        step("2", "Parameters", "Numeric columns preselected"), arrow,
+        step("", "Batch design", "Advanced: nested or crossed"), arrow,
+        step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
+        step("4", "Run models", "Results and plots open in the tabs")),
+      h5(class = "mt-4", "Batch design (Advanced)"),
+      p("Pick the experiment design. One file should be related to one experiment."),
+      flow_pic(),
+      p(class = "small text-muted", "A line in several batches is normal in both designs. Crossed only",
+        "if one batch held more than one line."),
+      div(class = "mmc-designs",
+        div(class = "border rounded p-2 mmc-card",
+          div(strong("Nested (most ephys, some qPCR)"), p(class = "small mb-0",
+            "Each batch belongs to one line: culture batch, differentiation round, coverslip,",
+            "or a qPCR plate that held one line (plate confounded with line). Number each",
+            "line's batches B1, B2…")),
+          nested_pic(),
+          div(batch_sheet(list(
+            c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
+            c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
+            c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
+            "L2's B1 is not L1's B1. L3 and L4 have one batch each.",
+            "(1|Line/Batch)"))),
+        div(class = "border rounded p-2 mmc-card",
+          div(strong("Crossed (some ephys, most qPCR)"), p(class = "small mb-0",
+            "A plate, or a recording day, that held several lines and was repeated on other",
+            "days. Number the shared runs B1, B2… or use the plate ID. Lines don't need",
+            "to be in every run, but some runs must hold more than one line. Also when",
+            "each line was on one plate only.")),
+          crossed_pic(),
+          div(batch_sheet(list(
+            c("Control", "L1", "B1", "g"), c("AD", "L2", "B1", "g"),
+            c("Control", "L3", "B1", "g"), c("Control", "L1", "B2", "p"),
+            c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
+            "B1 is one day or plate for every line.",
+            "(1|Line) + (1|Batch) + (1|Line:Batch)")))),
+      p(class = "small text-muted", "One batch source per file: culture batch or plate, not",
+        "both. Same line in both groups (KD, OE, drug)? Use the same line label; either",
+        "design works."),
+      h5(class = "mt-4", "Which model runs"),
+      tags$table(class = "table table-sm w-auto mb-1",
+        tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Design"), tags$th("Model")),
+        fb("≥ 2", "≥ 2, shared by lines", "Crossed", tags$code("y ~ Tx + (1|Line) + (1|Batch) + (1|Line:Batch)")),
+        fb("≥ 2", "≥ 2 in a line", "Nested", tags$code("y ~ Tx + (1|Line/Batch)")),
+        fb("≥ 2", "1 per line", "Either", tags$code("y ~ Tx + (1|Line)")),
+        fb("1", "≥ 2", "Either", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
+        fb("1", "1", "Either", "Can't be tested")),
+      p(class = "small text-muted", "y = one parameter. Crossed with no shared batch runs as Nested.",
+        "(1|Line:Batch) is left out with one row per line per batch, or one batch per line.")),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own",
@@ -757,7 +812,10 @@ welcome_page <- function() {
     tags$ul(class = "small",
       tags$li("Data: small counts, percentages near 0 or 100%, scores, omics, skewed data with zeros"),
       tags$li("Designs: two batch sources, extra levels (e.g. coverslips within culture batches), genotype × treatment,",
-              "repeated measures per cell, matched pairs")),
+              "repeated measures per cell, matched pairs"),
+      tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Batches shared by lines (one qPCR plate with several",
+        "lines): corrected per line; the shared plate shift isn't separated. Crossed model: Advanced",
+        "switch in the sidebar.")),
     p(class = "small text-muted", "Full details: ",
       tags$a(href = "https://github.com/Enzyme5610/Mixed_Model_Correction", "README")))
 }
@@ -847,7 +905,7 @@ ui <- page_sidebar(
       .mmc-steps { display: flex; flex-wrap: wrap; gap: .4rem; align-items: stretch; }
       .mmc-step { border: 1px solid #dee2e6; border-radius: .5rem; padding: .4rem .6rem; flex: 1 1 110px; max-width: 160px; }
       .mmc-pic { display: block; width: 100%; max-width: 340px; margin: 2px 0; }
-      .mmc-flow { display: block; width: 100%; max-width: 600px; margin: 4px 0 12px; }
+      .mmc-flow { display: block; width: 100%; max-width: 620px; margin: 4px 0 4px; }
       .mmc-designs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
       .mmc-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: .25rem; }
       @media (max-width: 767.98px) { .mmc-designs { grid-template-columns: 1fr; } }
@@ -862,17 +920,19 @@ ui <- page_sidebar(
     helpText("Numeric columns are preselected."),
     uiOutput("param_warning"),
     hr(),
-    radioButtons("design", "3. Batch design",
-      choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (most qPCR)" = "crossed")),
+    input_switch("advanced", "Advanced designs"),
+    conditionalPanel("input.advanced",
+      radioButtons("design", "Batch design",
+        choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (some ephys, most qPCR)" = "crossed"))),
     uiOutput("design_note"),
     hr(),
-    radioButtons("adjust", "4. Pairwise p-value adjustment",
+    radioButtons("adjust", "3. Pairwise p-value adjustment",
                  choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni")),
     helpText("With only two treatment groups there is a single comparison,",
              "so both give the same p-value."),
     selectInput("ref", "Reference (control) group", choices = NULL),
     helpText("Sets comparison direction in tables and plots; p-values don't change."),
-    actionButton("run", "5. Run models", class = "btn-primary"),
+    actionButton("run", "4. Run models", class = "btn-primary"),
     div(class = "small text-muted mt-3",
         "Original script: Dr. Luis Gustavo Hernandez Carballo", br(),
         "Shiny app and visualizations: Prachetas Jai Patel")
@@ -935,9 +995,7 @@ ui <- page_sidebar(
             checkboxInput("dots", "Show dots", TRUE)),
           checkboxInput("outliers", "Circle possible outliers", TRUE),
           checkboxInput("adj_batch", "Batch-adjusted values", FALSE),
-          conditionalPanel("input.adj_batch",
-            helpText("Dots minus each batch's estimated shift. Statistics are",
-                     "unchanged; don't re-test adjusted values."))),
+          conditionalPanel("input.adj_batch", uiOutput("adj_note"))),
         accordion_panel("2. Group order & colors",
           helpText("Drag a group (or use the arrows) to reorder. Click a swatch to",
                    "change its color."),
@@ -993,7 +1051,7 @@ ui <- page_sidebar(
       markdown("
 **Model.** Each parameter: `parameter ~ Tx + (1 | Line/Batch)`, fit with
 `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
-Crossed (step 3, lines shared a batch): `(1 | Line) + (1 | Batch)`.
+Crossed (Advanced, lines shared a batch): `(1 | Line) + (1 | Batch) + (1 | Line:Batch)`.
 One Line: `(1 | Batch)`. One Batch, or no line with repeat batches:
 `(1 | Line)`.
 
@@ -1053,15 +1111,17 @@ server <- function(input, output, session) {
     prev_type(input$type)
   }, ignoreInit = TRUE)
 
+  design <- function() if (isTRUE(input$advanced)) input$design else "nested"
+
   # Model that will run, with fallbacks
   output$design_note <- renderUI({
     if (is.null(input$file)) return(NULL)
     d <- prep()$datos
-    f <- tryCatch(random_term(d, input$design), error = function(e) NULL)
+    f <- tryCatch(random_term(d, design()), error = function(e) NULL)
     div(class = "alert alert-info small py-1 px-2 mb-2",
       sprintf("%d line(s), %d batch(es). Model: ", nlevels(d$Line), nlevels(d$Batch)),
       if (is.null(f)) "can't be tested." else tags$code(f),
-      if (identical(input$design, "crossed") && !length(shared_batches(d)))
+      if (identical(design(), "crossed") && !length(shared_batches(d)))
         " No batch holds several lines, so crossed isn't possible.",
       if (nlevels(d$Line) == 1) " Results apply to this line only.")
   })
@@ -1089,9 +1149,9 @@ server <- function(input, output, session) {
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, input$adjust,
                           function(n, label) incProgress(1 / n, detail = label),
-                          design = input$design),
+                          design = design()),
                error = function(e) validate(conditionMessage(e))))
-    list(res = res, prep = p, adjust = input$adjust, design = input$design,
+    list(res = res, prep = p, adjust = input$adjust, design = design(),
          base = tools::file_path_sans_ext(input$file$name))
   })
 
@@ -1222,6 +1282,16 @@ server <- function(input, output, session) {
   # Residual checks, drawn only when shown
   observeEvent(results(), updateSelectInput(session, "resid_param",
     choices = vapply(results()$res, `[[`, "", "label")))
+  output$adj_note <- renderUI({
+    r <- tryCatch(results(), error = function(e) NULL)
+    sel <- if (is.null(r)) NULL else if (identical(input$fig, "all"))
+      r$res[vapply(r$res, `[[`, "", "label") %in% input$multi] else list(current())
+    msg <- unique(vapply(sel, function(x) adj_text(x$rand), ""))
+    helpText(if (length(msg) == 1) msg else "Dots minus each batch's estimated shift.",
+             "Statistics are unchanged; don't re-test adjusted values. SEM/SD shrink; model",
+             "CI shows the test's uncertainty.")
+  })
+
   output$resid_plot <- renderPlot({
     r <- results()
     x <- r$res[[match(input$resid_param, vapply(r$res, `[[`, "", "label"))]]
