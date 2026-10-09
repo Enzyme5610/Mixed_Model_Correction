@@ -590,8 +590,8 @@ batch_sheet <- function(rows, caption, formula = NULL, head = c("Tx", "Line", "B
 }
 
 # Welcome pictures (SVG): line labels above, batch labels below
-svg_pic <- function(...) HTML(paste0('<svg viewBox="0 0 300 112" class="mmc-pic" role="img">',
-                                     ..., "</svg>"))
+svg_pic <- function(..., h = 112) HTML(paste0('<svg viewBox="0 0 300 ', h,
+                                              '" class="mmc-pic" role="img">', ..., "</svg>"))
 svg_text <- function(x, y, s, size = 9) paste(sprintf(
   '<text x="%g" y="%g" font-size="%g" text-anchor="middle" fill="#444">%s</text>',
   x, y, size, s), collapse = "")
@@ -620,10 +620,25 @@ plate <- function(x, y, col, lab, lines) {
          svg_text(x + 64, y + 92, lab))
 }
 
-nested_pic <- function() svg_pic(
-  svg_bracket(14, 126, 16, "L1"), svg_bracket(174, 286, 16, "L2"),
-  coverslip(42, 58, sheet_cols[["g"]], "B1"), coverslip(98, 58, sheet_cols[["p"]], "B2"),
-  coverslip(202, 58, sheet_cols[["o"]], "B1"), coverslip(258, 58, sheet_cols[["b"]], "B2"))
+# Small plate holding one line (nested qPCR)
+mini_plate <- function(cx, y, col, lab) {
+  w <- expand.grid(i = 0:11, j = 0:7)
+  paste0(sprintf('<rect x="%g" y="%g" width="52" height="34" rx="3" fill="%s" stroke="%s"/>',
+                 cx - 26, y, tint(col, 0.15), col),
+         paste(sprintf('<circle cx="%.1f" cy="%.1f" r="1.4" fill="%s"/>',
+                       cx - 22 + w$i * 4, y + 3.5 + w$j * 3.9, col), collapse = ""),
+         svg_text(cx, y + 45, lab))
+}
+
+# Each line on its own coverslips (ephys) or plates (qPCR)
+nested_pic <- function() {
+  x <- c(42, 98, 202, 258); col <- sheet_cols[c("g", "p", "o", "b")]; b <- c("B1", "B2")
+  svg_pic(h = 154,
+    svg_bracket(14, 126, 16, "L1"), svg_bracket(174, 286, 16, "L2"),
+    paste(mapply(coverslip, x, 58, col, b), collapse = ""),
+    paste(mapply(mini_plate, x, 104, col, b), collapse = ""),
+    svg_text(150, c(61, 124), c("ephys", "qPCR")))
+}
 
 crossed_pic <- function() svg_pic(
   plate(10, 14, sheet_cols[["g"]], "B1 (plate A)", c("L1", "L2", "L3")),
