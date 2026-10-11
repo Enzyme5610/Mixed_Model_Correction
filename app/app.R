@@ -1258,15 +1258,16 @@ server <- function(input, output, session) {
   output$split_note_plot <- renderUI(split_note())
 
   # qPCR: one click to fold change 2^-ddCt in tables and plots
-  fc_note <- function(id) {
-    if (identical(input$scale, "fc")) helpText("Fold change 2^-ΔΔCt is on (Plots, 5. Axes & significance).")
-    else div(class = "alert alert-info small py-1 px-2", "ΔCt data (qPCR)? ",
-             actionLink(id, "Show fold change 2^-ΔΔCt"), " in tables and plots.")
-  }
-  output$fc_anova <- renderUI(fc_note("fc_on_anova"))
-  output$fc_pairs <- renderUI(fc_note("fc_on_pairs"))
-  lapply(c("fc_on_anova", "fc_on_pairs"), function(id)
-    observeEvent(input[[id]], updateSelectInput(session, "scale", selected = "fc")))
+  fc_on <- function() identical(input$scale, "fc")
+  fc_note <- function(id) div(class = "alert alert-info small py-1 px-2",
+    if (fc_on()) "Showing fold change 2^-ΔΔCt. " else "ΔCt data (qPCR)? ",
+    actionLink(id, if (fc_on()) "Show values as entered" else "Show fold change 2^-ΔΔCt"),
+    if (!fc_on()) " in tables and plots.")
+  output$fc_anova <- renderUI(fc_note("fc_link_anova"))
+  output$fc_pairs <- renderUI(fc_note("fc_link_pairs"))
+  # The link toggles: fold change on, or back to values as entered
+  lapply(c("fc_link_anova", "fc_link_pairs"), function(id)
+    observeEvent(input[[id]], updateSelectInput(session, "scale", selected = if (fc_on()) "raw" else "fc")))
 
   # Box plots default to no mean/error bar; restore SEM when leaving box
   prev_type <- reactiveVal("bar")
