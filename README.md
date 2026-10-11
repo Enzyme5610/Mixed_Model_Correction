@@ -5,8 +5,10 @@ with a linear mixed model, accounting for Line and Batch variability.
 Includes pairwise comparisons and downloadable plots. No installation needed.
 Data is local to your platform (PC/Mac/Linux).
 
-Nested model by default; the **Advanced designs** switch (sidebar) adds crossed
-and other designs ([Advanced designs](#advanced-designs)).
+The regular version uses the nested model. The **Advanced designs** switch
+(sidebar) adds crossed batches, matched lines, line-specific treatment effects,
+a Group × Subset test and more comparisons
+([Advanced designs](#advanced-designs)).
 
 **App:** https://enzyme5610.github.io/Mixed_Model_Correction/
 
@@ -44,7 +46,7 @@ AD,L5,B1,5.02,7.44
 
 ## Model
 
-`parameter ~ Tx + (1 | Line/Batch)` (nested; most ephys, some qPCR), fit with
+**Nested** (the regular version): `parameter ~ Tx + (1 | Line/Batch)`, fit with
 `lmerTest::lmer`, with Tx tested by a Type II F test using Kenward-Roger
 degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
 Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
@@ -62,8 +64,8 @@ Q-Q, residuals vs fitted) test the model's assumptions on the residuals.
 frequency): log10-transform values before upload. No 0 or negative values.
 
 **Several lines on one plate or day:** the nested model corrects each line's
-part of the plate as its own batch. The crossed model
-([Advanced designs](#advanced-designs)) also fits the plate's shared shift.
+part of the plate as its own batch (crossed model:
+[Advanced designs](#advanced-designs)).
 
 The results table lists each parameter's random effects (fallbacks can differ
 between parameters).
@@ -76,10 +78,8 @@ reference group (linear data), or as fold change 2^-ΔΔCt (ΔCt data, qPCR).
 Statistics always use the values as entered.
 
 **Batch-adjusted values** (optional) subtract each batch's estimated shift
-from the plotted values, using the model's random-effect estimates (BLUPs).
-With the nested model: each line's batch-to-batch deviation. With the crossed
-model (Advanced): each run's shared shift and each line's shift within it.
-For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
+from the plotted values, using the model's random-effect estimates (BLUPs):
+each line's batch-to-batch deviation. For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
 
 A reference (control) group sets the comparison direction in tables and plots.
 Significance can be shown as p-values or stars (ns, *, **, ***, ****).
@@ -97,12 +97,12 @@ one shared Y axis, with the groups next to each other for each parameter.
 **Split and combined** (Plots and Pairwise tabs): groups named like `Ctrl_M,
 Ctrl_F, KO_M, KO_F` are split at the last `_`. Ctrl vs KO is fit within each
 subset (M, F) and on all cells (Combined), each its own model. Every group
-needs every subset. Does not test whether subsets differ (Advanced designs
-adds that test).
+needs every subset. Does not test whether subsets differ.
 
 ## Advanced designs
 
-The **Advanced designs** switch (sidebar) adds the following.
+Turn on **Advanced designs** in the sidebar. Everything above still applies;
+Advanced adds the following.
 
 **Crossed batch design** (some ephys, most qPCR): runs that held several lines
 and were repeated on other days (qPCR plate, or several lines recorded the
@@ -112,18 +112,24 @@ several. Model:
 `parameter ~ Tx + (1 | Line) + (1 | Batch) + (1 | Line:Batch)`, the nested
 model plus a batch shift shared by lines. `(1 | Line:Batch)` is left out with
 one row per line per batch, or one batch per line. Without a shared batch it
-falls back to nested.
+falls back to nested. Batch-adjusted values remove each run's shared shift and
+each line's shift within it.
 
-**Pair** (optional column, used by exact name): lines come in matched pairs
-(e.g. parental and corrected clone). Compares within pairs, so shared genetic
-background drops out (more power). Model:
-`parameter ~ Tx + (1 | Line/Batch) + (1 | Pair)`, added only when the data can
-estimate it.
+**Matched lines** (sidebar checkbox, shown when some lines aren't in the
+reference group): lines come in matched pairs (e.g. parental and corrected
+clone). Each line is matched to its partner in the reference group. Compares
+within pairs, so shared genetic background drops out (more power). Adds
+`(1 | Pair)`.
 
-**Allow line-specific treatment effects** (shown when the same line is in
-several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`. Each line can
-respond differently; the test then asks whether the effect holds across lines.
-Needs several lines.
+**Allow line-specific treatment effects** (sidebar checkbox, shown when the
+same line is in several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`.
+Each line can respond differently; the test then asks whether the effect holds
+across lines. Needs several lines.
+
+**Both together:** matched lines, each in several groups (parental and
+corrected clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Tx)`.
+Background is removed and each line can respond differently. Matched lines and
+line-specific effects work with nested and crossed.
 
 **Group × Subset interaction** (Pairwise tab, Split and combined view): does
 the group difference change between subsets? With names like `Ctrl_veh,

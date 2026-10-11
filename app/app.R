@@ -14,10 +14,10 @@ prepare_data <- function(path) {
   names(datos) <- make.names(original_names, unique = TRUE)
   datos <- datos[!is.na(datos$Tx), ]  # drop empty rows
   # Levels in CSV order
-  for (v in intersect(c("Tx", "Line", "Batch", opt_cols), names(datos)))
+  for (v in intersect(c("Tx", "Line", "Batch"), names(datos)))
     datos[[v]] <- factor(datos[[v]], levels = unique(datos[[v]]))
   if (nlevels(datos$Tx) < 2) stop("Tx must have at least two groups.")
-  cols <- which(!original_names %in% c("Tx", "Line", "Batch", opt_cols) &
+  cols <- which(!original_names %in% c("Tx", "Line", "Batch") &
                 nzchar(trimws(original_names)))  # skip blank headers
   # Metadata (dates, IDs, wells) and constant columns aren't preselected
   meta <- grepl("date|day|well|passage|(^|[^a-z])id($|[^a-z])", original_names[cols], ignore.case = TRUE) |
@@ -27,21 +27,15 @@ prepare_data <- function(path) {
        numeric = vapply(datos[cols], is.numeric, logical(1)) & !meta)
 }
 
-# Advanced: optional Pair column (matched lines), used by exact name
-opt_cols <- "Pair"
-
-# Random effects; Advanced adds Pair
-random_term <- function(datos, design = "nested", extras = FALSE, line_tx = FALSE) {
-  rand <- base_term(datos, design)
-  if (extras) rand <- extra_terms(datos, rand)
-  # Treatment effect may differ by line (same line in several groups)
-  if (line_tx) rand <- extra_terms(datos, rand, list(c("Line", "Tx")))
-  rand
+# Random effects; Advanced adds matched pairs (Pair, set in the sidebar) and a
+# treatment effect per line (same line in several groups)
+random_term <- function(datos, design = "nested", line_tx = FALSE) {
+  extra_terms(datos, base_term(datos, design), c(list("Pair"), if (line_tx) list(c("Line", "Tx"))))
 }
 
-# Extra terms (Pair by default), each only if estimable
+# Extra terms, each only if in the data and estimable
 # (several groups, some with replicates) and not the same grouping as a term already in
-extra_terms <- function(d, rand, cand = list("Pair")) {
+extra_terms <- function(d, rand, cand) {
   grp <- function(cols) interaction(d[cols], drop = TRUE)
   same <- function(g, h) nlevels(g) == nlevels(h) && nlevels(interaction(g, h, drop = TRUE)) == nlevels(g)
   parts <- trimws(strsplit(gsub("[()]|1\\|", "", rand), "+", fixed = TRUE)[[1]])
@@ -77,7 +71,7 @@ base_term <- function(datos, design = "nested") {
 }
 
 run_models <- function(prep, vars, progress = function(n, label) NULL,
-                       design = "nested", extras = FALSE, line_tx = FALSE) {
+                       design = "nested", line_tx = FALSE) {
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
@@ -86,7 +80,7 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
     # Lines/Batches counted where this parameter was measured
-    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, extras, line_tx),
+    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, line_tx),
                      error = function(e) stop("'", label, "': ", conditionMessage(e), call. = FALSE))
     f <- reformulate(c("Tx", rand), var)
     warn <- character()
@@ -608,7 +602,7 @@ split_prep <- function(p, var) {
 }
 
 # Advanced: does the group difference change between subsets? (Group x Subset, all cells)
-split_interaction <- function(p, var, label, design, extras) {
+split_interaction <- function(p, var, label, design) {
   d <- split_prep(p, var)$datos
   d <- droplevels(d[!is.na(d[[var]]), ])
   out <- function(F = NA, df1 = NA, df2 = NA, pv = NA, note = "")
@@ -618,7 +612,7 @@ split_interaction <- function(p, var, label, design, extras) {
   if (any(tapply(d$Line, d$.subset, function(l) length(unique(l))) < 2))
     return(out(note = "Needs 2+ lines per subset"))
   # Group within lines: its effect may differ by line
-  rand <- extra_terms(d, random_term(d, design, extras), list(c("Line", "Tx")))
+  rand <- random_term(d, design, line_tx = TRUE)
   m <- suppressMessages(suppressWarnings(lmerTest::lmer(reformulate(c("Tx * .subset", rand), var),
                                                         data = d, REML = TRUE)))
   a <- stats::anova(m, type = "II", ddf = "Kenward-Roger")["Tx:.subset", ]
@@ -742,6 +736,31 @@ split_pic <- function() {
           svg_text(cx, 110, c("M", "F", "Combined")))
 }
 
+# Mini chart: each line (or pair) across groups, values 0-10; NA = not in that group
+trend_pic <- function(groups, ys, cols, labs, under = "") {
+  x <- 150 + 60 * (seq_along(groups) - (length(groups) + 1) / 2)  # 60 apart, centered
+  y <- function(v) 85 - 7 * v
+  lines <- unlist(Map(function(v, col, lab) {
+    i <- which(!is.na(v))
+    paste0(sprintf('<path d="M%s" fill="none" stroke="%s" stroke-width="2"/>',
+                   paste(x[i], y(v[i]), collapse = "L"), col),
+           paste(sprintf('<circle cx="%g" cy="%g" r="3.5" fill="%s"/>', x[i], y(v[i]), col), collapse = ""),
+           svg_text(x[max(i)] + 20, y(v[max(i)]) + 3, lab, 8))
+  }, ys, cols, labs))
+  svg_pic('<path d="M30 90H285" stroke="#999"/>', paste(lines, collapse = ""), svg_text(x, 101, groups, 8), under)
+}
+# Pairs sit at different heights (background) but change alike
+pair_pic <- function() trend_pic(c("Parental", "Corrected"), list(c(2.5, 4.5), c(6.5, 8.5), c(4.5, 6.5)),
+                                 sheet_cols[c("g", "p", "o")], paste("Pair", 1:3))
+# Each line responds differently
+linetx_pic <- function() trend_pic(c("Vehicle", "Drug"), list(c(4, 8.5), c(5.5, 6), c(2.5, 4.5)),
+                                   sheet_cols[c("g", "p", "o")], c("L1", "L2", "L3"))
+# Matched lines, each with vehicle and drug
+both_pic <- function() trend_pic(c("veh", "drug", "veh", "drug"),
+  list(c(2.5, 5, NA, NA), c(NA, NA, 4.5, 5.5), c(6, 7, NA, NA), c(NA, NA, 8, 9.5)),
+  sheet_cols[c("g", "g", "p", "p")], c("", "Pair 1", "", "Pair 2"),
+  svg_text(c(90, 210), 110, c("Parental", "Corrected"), 8))
+
 # Design flowchart: two yes/no questions
 flow_pic <- function() {
   box <- function(x, w, lines) paste0(sprintf(
@@ -777,6 +796,8 @@ welcome_page <- function() {
     tags$span(`data-display-if` = "input.design == 'crossed'", `data-ns-prefix` = "",
               "(1|Line) + (1|Batch) + (1|Line:Batch)"))
   model <- function(add) tags$code("y ~ Tx +", base, tags$span(class = "mmc-add", paste("+", add)))
+  card <- function(title, text, pic, add) div(class = "border rounded p-2 mmc-card",
+    div(strong(title), p(class = "small mb-0", text)), pic, div(class = "small", model(add)))
   div(class = "p-2", style = "max-width: 900px;",
     h3("Welcome to Mixed Model Correction!"),
     conditionalPanel("!input.advanced", p(class = "text-muted mb-2",
@@ -849,16 +870,19 @@ welcome_page <- function() {
     p(class = "small text-muted", "y = one parameter.", tags$span(`data-display-if` = "input.advanced",
       `data-ns-prefix` = "", "Crossed with no shared batch runs as Nested.")),
     conditionalPanel("input.advanced",
-      h5(class = "mt-4", "Matched pairs"),
-      p(class = "small mb-1", "Lines come in matched pairs (parental and corrected clone)? Add a column named",
-        "Pair with each pair's label. Compares within pairs, so shared genetic background drops out: more power."),
-      p(class = "small", model("(1|Pair)")),
-      h5(class = "mt-4", "Same line in several groups"),
-      p(class = "small mb-1", "Same line in several groups (e.g. vehicle and drug, or control and KD)? Use the",
-        "same line label; if treated per coverslip or well, Batch = coverslip or well. The sidebar then shows",
-        "\u201cAllow line-specific treatment effects\u201d: each line can respond differently, and the test asks",
-        "whether the effect holds across lines. Needs several lines."),
-      p(class = "small", model("(1|Line:Tx)")),
+      h5(class = "mt-4", "Matched lines and line-specific effects"),
+      p(class = "small", "Sidebar options; each works with nested and crossed."),
+      div(class = "mmc-designs mmc-3",
+        card("Matched lines", paste("Parental and corrected clone of one donor. Background differs between",
+             "pairs; comparing within pairs removes it: more power."), pair_pic(), "(1|Pair)"),
+        card("Line-specific treatment effects", paste("Same lines in several groups (vehicle and drug).",
+             "Lines can respond differently; the test asks whether the effect holds across lines. Needs",
+             "several lines."), linetx_pic(), "(1|Line:Tx)"),
+        card("Both", paste("Matched lines, each in several groups (parental and corrected, each with",
+             "vehicle and drug): background removed, and each line can respond differently."),
+             both_pic(), "(1|Pair) + (1|Line:Tx)")),
+      p(class = "small text-muted mt-2", "Same line in several groups? Use the same line label; if treated",
+        "per coverslip or well, Batch = coverslip or well."),
       h5(class = "mt-4", "Comparisons"),
       p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
         "selected pairs (Holm). Tables and plot brackets show only the tested pairs. With each vs",
@@ -928,7 +952,7 @@ ui <- page_sidebar(
         setTimeout(() => URL.revokeObjectURL(url), 5000);
       });
       // Color and shape pickers, kept per session
-      const picks = {cols: {}, shapes: {}};
+      const picks = {cols: {}, shapes: {}, pairs: {}};
       document.addEventListener('change', e => {
         const el = e.target.closest('.mmc-pick'); if (!el) return;
         picks[el.dataset.input][el.dataset.key] = el.value;
@@ -982,7 +1006,8 @@ ui <- page_sidebar(
       .mmc-flow { display: block; width: 100%; max-width: 620px; margin: 4px 0 4px; }
       .mmc-designs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
       .mmc-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: .25rem; }
-      @media (max-width: 767.98px) { .mmc-designs { grid-template-columns: 1fr; } }
+      .mmc-designs.mmc-3 { grid-template-columns: 1fr 1fr 1fr; }
+      @media (max-width: 767.98px) { .mmc-designs, .mmc-designs.mmc-3 { grid-template-columns: 1fr; } }
       .mmc-arrow { align-self: center; font-size: 1.4rem; color: #888; }
       #design .radio { margin-bottom: .6rem; }"),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
@@ -999,7 +1024,7 @@ ui <- page_sidebar(
       radioButtons("design", "Batch design",
         choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (some ephys, most qPCR)" = "crossed"))),
     uiOutput("design_note"),
-    conditionalPanel("input.advanced", uiOutput("line_tx_ui")),
+    conditionalPanel("input.advanced", uiOutput("pair_ui"), uiOutput("line_tx_ui")),
     hr(),
     conditionalPanel("input.advanced",
       radioButtons("cmp", "3. Comparisons", choices = c(
@@ -1011,8 +1036,6 @@ ui <- page_sidebar(
     conditionalPanel("input.advanced && input.cmp == 'sel'",
       selectizeInput("sel_pairs", "Pairs to test", choices = NULL, multiple = TRUE,
                      options = list(plugins = list("remove_button"), placeholder = "All pairs"))),
-    helpText("With only two treatment groups there is a single comparison,",
-             "so every adjustment gives the same p-value."),
     selectInput("ref", "Reference (control) group", choices = NULL),
     conditionalPanel("!(input.advanced && input.cmp == 'ref')",
       helpText("Sets comparison direction in tables and plots; p-values don't change.")),
@@ -1030,6 +1053,7 @@ ui <- page_sidebar(
       helpText("Fold-change columns appear when the plot Y axis is set to fold change",
                "(ΔCt data); confidence intervals are in the Pairwise tab."),
       tableOutput("anova_table"),
+      uiOutput("warn_note"),
       actionButton("dl_anova", "Download results (.csv)", icon = icon("download")),
       h6(class = "mt-4", "Possible outliers"),
       helpText("Cells more than 3 SD from the model's prediction for their group, line and",
@@ -1043,7 +1067,6 @@ ui <- page_sidebar(
                  "the band, residuals roughly normal. Right: even spread around 0, equal",
                  "variance. Red: possible outlier."))
     ),
-    nav_panel("ANOVA output", verbatimTextOutput("anova_print")),
     nav_panel("Pairwise",
       radioButtons("pairs_view", NULL, inline = TRUE, choices = c(
         "Groups as entered" = "groups", "Split and combined" = "split")),
@@ -1140,9 +1163,8 @@ ui <- page_sidebar(
       h6("First 50 rows"), tableOutput("preview")),
     nav_panel("About",
       markdown("
-**Model.** Each parameter: `parameter ~ Tx + (1 | Line/Batch)`, fit with
-`lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
-Crossed (Advanced, lines shared a batch): `(1 | Line) + (1 | Batch) + (1 | Line:Batch)`.
+**Model.** Regular version: nested, `parameter ~ Tx + (1 | Line/Batch)`, fit
+with `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
 One Line: `(1 | Batch)`. One Batch, or no line with repeat batches:
 `(1 | Line)`.
 
@@ -1151,20 +1173,24 @@ parameters (e.g. gene panels). Adjusts Tx p-values across all parameters in
 a run.
 
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
-The reference group sets direction only; p-values don't change. Advanced:
-each vs reference (Dunnett) or selected pairs (Holm).
-
-**Allow line-specific treatment effects** (Advanced, when the same line is in
-several groups): adds `(1 | Line:Tx)`. Each line can respond differently; the
-test then asks whether the effect holds across lines. Needs several lines.
-
-**Advanced designs.** An optional Pair column adds `(1 | Pair)` when the data
-can estimate it; Split and combined adds a Group \u00d7 Subset interaction test.
+The reference group sets direction only; p-values don't change.
 
 **Plots.** Display only; statistics always use the values as entered.
 Model CI/SE match the statistics; SEM/SD ignore Line and Batch.
 Batch-adjusted values subtract each batch's estimated shift; don't re-test
 them.
+
+---
+
+**Advanced designs** (sidebar switch)
+
+- **Crossed** (lines shared a batch): `(1 | Line) + (1 | Batch) + (1 | Line:Batch)`.
+- **Matched lines** (parental and corrected clone): adds `(1 | Pair)`.
+- **Allow line-specific treatment effects** (same line in several groups):
+  adds `(1 | Line:Tx)`. Each line can respond differently; the test then asks
+  whether the effect holds across lines. Needs several lines.
+- **Group \u00d7 Subset interaction** (Split and combined).
+- **Comparisons:** each vs reference (Dunnett) or selected pairs (Holm).
 
 ---
 
@@ -1214,7 +1240,6 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   design <- function() if (isTRUE(input$advanced) && !is.null(input$design)) input$design else "nested"
-  extras <- function() isTRUE(input$advanced)  # Pair column and interaction test
   line_tx <- function() isTRUE(input$advanced) && isTRUE(input$line_tx)
   cmp_mode <- function() if (isTRUE(input$advanced) && !is.null(input$cmp)) input$cmp else "all"
   cmp_adjust <- function() switch(cmp_mode(), ref = "dunnett", sel = "holm", input$adjust)
@@ -1235,11 +1260,43 @@ server <- function(input, output, session) {
     if (within) checkboxInput("line_tx", "Allow line-specific treatment effects", isolate(isTRUE(input$line_tx)))
   })
 
+  # Matched lines: each line outside the reference group picks its partner in it
+  pair_lines <- reactive({
+    d <- prep()$datos
+    ref <- if (isTRUE(input$ref %in% levels(d$Tx))) input$ref else levels(d$Tx)[1]
+    in_ref <- unique(as.character(d$Line[d$Tx == ref]))
+    list(ref = ref, in_ref = in_ref, other = setdiff(levels(d$Line), in_ref))
+  })
+  output$pair_ui <- renderUI({
+    pl <- tryCatch(pair_lines(), error = function(e) NULL)
+    if (!length(pl$other) || !length(pl$in_ref)) return(NULL)
+    cur <- isolate(input$pairs)
+    tagList(
+      checkboxInput("pair_on", "Matched lines (e.g. parental and corrected clone)", isolate(isTRUE(input$pair_on))),
+      conditionalPanel("input.pair_on", tags$table(class = "table table-sm align-middle mb-2",
+        tags$tr(tags$th("Line"), tags$th(paste0("Matched to (", pl$ref, ")"))),
+        lapply(pl$other, function(l) tags$tr(tags$td(l), tags$td(tags$select(
+          class = "mmc-pick form-select form-select-sm", `data-input` = "pairs", `data-key` = l,
+          `aria-label` = paste("Match for", l), lapply(c("none", pl$in_ref), function(v)
+            tags$option(value = v, selected = if (identical(v, cur[[l]])) NA, v)))))))))
+  })
+  # Data with Pair: a matched line takes its partner's name (no Pair unless matched)
+  paired <- reactive({
+    p <- prep()
+    pl <- pair_lines()
+    m <- unlist(input$pairs)
+    m <- m[names(m) %in% pl$other & m %in% pl$in_ref]
+    line <- as.character(p$datos$Line)
+    p$datos$Pair <- if (isTRUE(input$advanced) && isTRUE(input$pair_on) && length(m))
+      factor(ifelse(line %in% names(m), m[line], line))
+    p
+  })
+
   # Model that will run, with fallbacks
   output$design_note <- renderUI({
     if (is.null(input$file)) return(NULL)
-    d <- prep()$datos
-    f <- tryCatch(random_term(d, design(), extras(), line_tx()), error = function(e) NULL)
+    d <- paired()$datos
+    f <- tryCatch(random_term(d, design(), line_tx()), error = function(e) NULL)
     div(class = "alert alert-info small py-1 px-2 mb-2",
       sprintf("%d line(s), %d batch(es). Model: ", nlevels(d$Line), nlevels(d$Batch)),
       if (is.null(f)) "can't be tested." else tags$code(f),
@@ -1266,13 +1323,13 @@ server <- function(input, output, session) {
   })
 
   results <- eventReactive(input$run, {
-    p <- prep()
+    p <- paired()
     validate(need(length(input$params) > 0, "Select at least one parameter."))
     res <- withProgress(message = "Fitting models", value = 0,
       tryCatch(run_models(p, input$params, function(n, label) incProgress(1 / n, detail = label),
-                          design = design(), extras = extras(), line_tx = line_tx()),
+                          design = design(), line_tx = line_tx()),
                error = function(e) validate(conditionMessage(e))))
-    list(res = res, prep = p, design = design(), extras = extras(), line_tx = line_tx(),
+    list(res = res, prep = p, design = design(), advanced = isTRUE(input$advanced), line_tx = line_tx(),
          base = tools::file_path_sans_ext(input$file$name))
   })
 
@@ -1459,16 +1516,11 @@ server <- function(input, output, session) {
     o
   }, digits = 4)
 
-  output$anova_print <- renderPrint({
-    r <- results()
-    labels <- vapply(r$res, `[[`, "", "label")
-    cat("Parameters: ", paste(labels, collapse = ", "), "\n", sep = "")
-    for (x in r$res) {
-      cat("\n", x$label, " ~ Tx + ", x$rand, "\n", sep = "")
-      print(x$anova)
-      if (length(x$warnings)) cat("Warning:", x$warnings, sep = "\n  ")
-      cat("\n")
-    }
+  # Model warnings (e.g. convergence), per parameter
+  output$warn_note <- renderUI({
+    w <- unlist(lapply(results()$res, function(x) if (length(x$warnings)) paste0(x$label, ": ", x$warnings)))
+    if (length(w)) div(class = "alert alert-warning small py-1 px-2", "Model warnings:",
+                       tags$ul(class = "mb-0", lapply(w, tags$li)))
   })
 
   current <- reactive({
@@ -1502,9 +1554,9 @@ server <- function(input, output, session) {
       setNames(Map(function(sp, lab, x) {
         res <- tryCatch(run_models(sp, sp$MM_Vars, function(n, label)
                           incProgress(1 / (n * length(sps)), detail = paste(lab, label)),
-                          r$design, r$extras, r$line_tx),
+                          r$design, r$line_tx),
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
-        inter <- if (isTRUE(r$extras)) tryCatch(split_interaction(r$prep, x$var, lab, r$design, TRUE),
+        inter <- if (isTRUE(r$advanced)) tryCatch(split_interaction(r$prep, x$var, lab, r$design),
                                                 error = function(e) NULL)
         list(prep = sp, res = res, inter = inter)
       }, sps, labels, r$res), labels))
