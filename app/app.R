@@ -873,8 +873,9 @@ welcome_page <- function() {
       h5(class = "mt-4", "Matched lines and line-specific effects"),
       p(class = "small", "Sidebar options; each works with nested and crossed."),
       div(class = "mmc-designs mmc-3",
-        card("Matched lines", paste("Parental and corrected clone of one donor. Background differs between",
-             "pairs; comparing within pairs removes it: more power."), pair_pic(), "(1|Pair)"),
+        card("Matched lines", paste("Each corrected clone is matched to its parental line (same donor).",
+             "Comparing within each pair removes donor differences, so real effects are easier to detect."),
+             pair_pic(), "(1|Pair)"),
         card("Line-specific treatment effects", paste("Same lines in several groups (vehicle and drug).",
              "Lines can respond differently; the test asks whether the effect holds across lines. Needs",
              "several lines."), linetx_pic(), "(1|Line:Tx)"),
@@ -1049,8 +1050,7 @@ ui <- page_sidebar(
     id = "tabs",
     nav_panel("Welcome", welcome_page()),
     nav_panel("ANOVA results",
-      helpText("Fold-change columns appear when the plot Y axis is set to fold change",
-               "(ΔCt data); confidence intervals are in the Pairwise tab."),
+      uiOutput("fc_anova"),
       tableOutput("anova_table"),
       uiOutput("warn_note"),
       actionButton("dl_anova", "Download results (.csv)", icon = icon("download")),
@@ -1069,8 +1069,8 @@ ui <- page_sidebar(
     nav_panel("Pairwise",
       radioButtons("pairs_view", NULL, inline = TRUE, choices = c(
         "Groups as entered" = "groups", "Split and combined" = "split")),
-      helpText("Fold-change columns (2^-estimate) appear when the plot Y axis is set",
-               "to fold change (ΔCt data)."),
+      conditionalPanel("input.pairs_view == 'split'", uiOutput("split_note_pairs")),
+      uiOutput("fc_pairs"),
       tableOutput("pairs_table"),
       actionButton("dl_pairs", "Download pairwise (.csv)", icon = icon("download")),
       conditionalPanel("input.pairs_view == 'split' && input.advanced",
@@ -1091,7 +1091,8 @@ ui <- page_sidebar(
             selectInput("plot_param", "Parameter", choices = NULL)),
           conditionalPanel("input.fig == 'split'",
             helpText("Ctrl_M and Ctrl_F: Ctrl in subsets M and F, plus Combined. Each",
-                     "subset is its own model; p-values in the Pairwise tab.")),
+                     "subset is its own model; p-values in the Pairwise tab."),
+            uiOutput("split_note_plot")),
           conditionalPanel("input.fig == 'all'",
             selectizeInput("multi", "Parameters", choices = NULL, multiple = TRUE,
                            options = list(plugins = list("remove_button")))),
@@ -1232,16 +1233,40 @@ server <- function(input, output, session) {
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
 
-  # Comparison picker: labelled later vs earlier group in plot order, as in the tables
+  # Comparison labels: later vs earlier group in plot order, as in the tables
+  pick_label <- function(a, b) {
+    ord <- tx_order(prep()$datos, list(order = tx_ord(), ref = input$ref))
+    ifelse(match(a, ord) > match(b, ord), paste(a, "vs", b), paste(b, "vs", a))
+  }
   observe({
-    d <- prep()$datos
-    ord <- tx_order(d, list(order = tx_ord(), ref = input$ref))
-    prs <- combn(levels(d$Tx), 2)
-    later <- match(prs[1, ], ord) > match(prs[2, ], ord)
+    prs <- combn(levels(prep()$datos$Tx), 2)
     updateSelectizeInput(session, "sel_pairs", selected = isolate(input$sel_pairs),
-      choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"),
-                         ifelse(later, paste(prs[1, ], "vs", prs[2, ]), paste(prs[2, ], "vs", prs[1, ]))))
+      choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"), pick_label(prs[1, ], prs[2, ])))
   })
+
+  # Split and combined compares pooled groups: a pick within one pooled group has no counterpart
+  split_note <- function() {
+    if (cmp_mode() != "sel" || !length(input$sel_pairs)) return(NULL)
+    ab <- do.call(rbind, strsplit(input$sel_pairs, "|", fixed = TRUE))
+    same <- pool_name(ab[, 1]) == pool_name(ab[, 2])
+    if (any(same)) div(class = "alert alert-warning small py-1 px-2",
+      "Not used in Split and combined (both groups pool to one): ",
+      paste0(paste(pick_label(ab[same, 1], ab[same, 2]), collapse = "; "), "."),
+      if (all(same)) " No selected comparison applies here, so all pooled comparisons are shown.")
+  }
+  output$split_note_pairs <- renderUI(split_note())
+  output$split_note_plot <- renderUI(split_note())
+
+  # qPCR: one click to fold change 2^-ddCt in tables and plots
+  fc_note <- function(id) {
+    if (identical(input$scale, "fc")) helpText("Fold change 2^-ΔΔCt is on (Plots, 5. Axes & significance).")
+    else div(class = "alert alert-info small py-1 px-2", "ΔCt data (qPCR)? ",
+             actionLink(id, "Show fold change 2^-ΔΔCt"), " in tables and plots.")
+  }
+  output$fc_anova <- renderUI(fc_note("fc_on_anova"))
+  output$fc_pairs <- renderUI(fc_note("fc_on_pairs"))
+  lapply(c("fc_on_anova", "fc_on_pairs"), function(id)
+    observeEvent(input[[id]], updateSelectInput(session, "scale", selected = "fc")))
 
   # Box plots default to no mean/error bar; restore SEM when leaving box
   prev_type <- reactiveVal("bar")

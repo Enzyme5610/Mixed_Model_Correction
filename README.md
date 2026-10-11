@@ -38,7 +38,8 @@ AD,L5,B1,5.02,7.44
 - **Line:** one label per actual cell line, e.g. its ID (C20300M). Same label
   across groups for the same line.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
-  its own row.
+  its own row. The ANOVA results and Pairwise tabs have a one-click switch to
+  fold change (2^-ΔΔCt).
 
 **Batch column:** groups cells that share more than their line, such as cells
 grown or treated together. What to enter:
@@ -136,8 +137,9 @@ each line's shift within it.
 
 **Matched lines** (sidebar checkbox, shown when some lines aren't in the
 reference group): lines come in matched pairs (e.g. parental and corrected
-clone). Each line is matched to its partner in the reference group. Compares
-within pairs, so shared genetic background drops out (more power). Adds
+clone). Each line is matched to its partner in the reference group. Comparing
+within each pair removes donor differences, so real effects are easier to
+detect. Adds
 `(1 | Pair)`.
 
 **Allow line-specific treatment effects** (sidebar checkbox, shown when the
