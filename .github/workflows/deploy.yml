@@ -35,6 +35,7 @@ jobs:
             any::pbkrtest
             any::emmeans
             any::devEMF
+            any::svglite
 
       - name: Build Shinylive site
         run: Rscript -e 'shinylive::export("app", "site")'

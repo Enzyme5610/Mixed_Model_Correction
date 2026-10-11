@@ -930,10 +930,16 @@ plot_formats <- list(
               open = raster(tiff, compression = "lzw")),
   jpeg = list(label = "JPEG", ext = "jpg", type = "image/jpeg", open = raster(jpeg, quality = 95)),
   pdf  = list(label = "PDF", ext = "pdf", type = "application/pdf", open = pdf),
-  svg  = list(label = "SVG", ext = "svg", type = "image/svg+xml", open = svg),
+  # Real text (not glyph outlines), so PowerPoint keeps it when converting to shapes;
+  # named Arial (on Windows and Mac), sized with whatever sans font R has
+  svg  = list(label = "SVG", ext = "svg", type = "image/svg+xml", open = function(f, w, h) {
+    face <- function(weight) list(name = "Arial", file = systemfonts::match_fonts("sans", weight = weight)$path)
+    svglite::svglite(f, w, h, fix_text_size = FALSE,
+                     user_fonts = list(sans = list(plain = face("normal"), bold = face("bold"))))
+  }),
   # Plain EMF (no EMF+) so PowerPoint can ungroup it into shapes
   emf  = list(label = "EMF", ext = "emf", type = "image/emf",
-              open = function(f, w, h) devEMF::emf(f, w, h, emfPlus = FALSE, family = "Aptos")),
+              open = function(f, w, h) devEMF::emf(f, w, h, emfPlus = FALSE, family = "Arial")),  # on Windows and Mac
   pdf_all = list(type = "application/pdf", open = pdf))
 
 dl_item <- function(f, label) {
