@@ -795,8 +795,6 @@ welcome_page <- function() {
   model <- function(add) tags$code("y ~ Tx +", base, tags$span(class = "mmc-add", paste("+", add)))
   card <- function(title, text, pic, add) div(class = "border rounded p-2 mmc-card",
     div(strong(title), p(class = "small mb-0", text)), pic, div(class = "small", model(add)))
-  one_file <- paste("One file should be related to one experiment. Batch = your main batch source: the",
-                    "culture batch if you track it, otherwise the coverslip or plate.")
   nested_sheet <- function(caption) batch_sheet(list(
     c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
     c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
@@ -816,14 +814,21 @@ welcome_page <- function() {
       step("2", "Parameters", "Numeric columns preselected"), arrow,
       step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
       step("4", "Run models", "Results and plots open in the tabs")),
+    h5(class = "mt-4", "Batches"),
+    p("One file should be related to one experiment. The Batch column groups cells that share more than",
+      "their line, such as cells grown or treated together. What to enter:"),
+    tags$table(class = "table table-sm w-auto mb-2 small",
+      tags$tr(tags$th("Your experiment"), tags$th("Batch column")),
+      fb("Each line in one group (e.g. Control lines vs AD lines)", "The largest unit grown together, usually the culture batch"),
+      fb("Same line in several groups (e.g. vehicle and drug)",
+         "The unit that got one treatment, usually the coverslip or well"),
+      fb("One plate or recording day held several lines", "The shared plate or day (crossed design)")),
     conditionalPanel("!input.advanced",
-      h5(class = "mt-4", "Batches"),
-      p(one_file, "Number each line's batches B1, B2."),
       div(style = "max-width: 420px;",
         nested_sheet("Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each."))),
     conditionalPanel("input.advanced",
       h5(class = "mt-4", "Batch design (Advanced)"),
-      p("Pick the experiment design.", one_file),
+      p("Pick the experiment design."),
       flow_pic(),
       p(class = "small text-muted", "A line in several batches is normal in both designs. Crossed only",
         "if one batch held more than one line."),
@@ -850,7 +855,6 @@ welcome_page <- function() {
     # Data-entry rules, both modes
     tags$ul(class = "small text-muted mt-2",
       tags$li("Same line in several groups (e.g. vehicle and drug): use the same Line label."),
-      tags$li("Treatment applied per coverslip or well: use the coverslip or well as Batch."),
       tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Plates or recording days shared",
               "by several lines, matched clone pairs and line-specific treatment effects are in Advanced designs.")),
     h5(class = "mt-4", "Which model runs"),

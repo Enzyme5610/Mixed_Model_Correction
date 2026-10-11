@@ -37,12 +37,20 @@ AD,L5,B1,5.02,7.44
 - **One file = one experiment** (same comparison, same measurement type).
 - **Line:** one label per actual cell line, e.g. its ID (C20300M). Same label
   across groups for the same line.
-- **Batch:** your main batch source, a unit that can shift all its cells
-  together: the culture batch if you track it, otherwise the coverslip or
-  plate. Number each line's batches B1, B2; different lines can all be B1.
-  Treatment applied per coverslip or well: Batch = coverslip or well.
 - **qPCR:** enter ΔCt values. Average technical replicates or enter each as
   its own row.
+
+**Batch column:** groups cells that share more than their line, such as cells
+grown or treated together. What to enter:
+
+| Your experiment | Batch column |
+|---|---|
+| Each line in one group (e.g. Control lines vs AD lines) | The largest unit grown together, usually the culture batch (differentiation round) |
+| Same line in several groups (e.g. vehicle and drug) | The unit that got one treatment, usually the coverslip or well |
+| One plate or recording day held several lines | The shared plate or day ([crossed design](#advanced-designs)) |
+
+Number each line's batches B1, B2. Another line's B1 is a different batch,
+except in the crossed design, where B1 is one plate or day shared by lines.
 
 ## Model
 
