@@ -376,6 +376,32 @@ err_label <- function(opt) {
          sem = "Mean ± SEM", sd = "Mean ± SD", none = "Mean")
 }
 
+# Plot frame: margins (shrunk below 5 in), x labels, title, model note, adjustment; returns old par
+plot_frame <- function(xlabs, k, ylim, ylab, main, note, adjust, opt, scale) {
+  ang <- label_angle(xlabs, opt)
+  op <- par(cex = min(1, min(dev.size("in")) / 5), tcl = -0.25, mgp = c(3, 0.6, 0),
+            mar = c(bottom_mar(xlabs, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
+  plot(NA, xlim = c(0.5, length(xlabs) + 0.5), ylim = ylim, xaxt = "n", xlab = "", ylab = ylab, las = 1)
+  x_labels(seq_along(xlabs), xlabs, ang)
+  if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
+  title(main = main, line = if (k > 2) 2.6 else 1.6)
+  mtext(note, side = 3, line = if (k > 2) 1.2 else 0.4, cex = 0.8 * par("cex"))
+  if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
+                   side = 3, line = 0.3, cex = 0.8 * par("cex"))
+  op
+}
+
+# Right-hand column from ky down: mean/error key, then stars
+key_legend <- function(lx, ky, key, opt) {
+  if (NROW(key)) {
+    g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty, lwd = 3,
+                col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
+                cex = 0.8, y.intersp = 1.4)
+    ky <- g$rect$top - g$rect$h
+  }
+  star_key(opt, lx, ky)
+}
+
 draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
   lev <- levels(datos$Tx)
@@ -400,24 +426,9 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   n_pairs <- if (opt$brackets) nrow(pw) else 0
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
-  # Shrink text and margins below 5 in
-  ang <- label_angle(ord, opt)
-  op <- par(cex = min(1, min(dev.size("in")) / 5), tcl = -0.25, mgp = c(3, 0.6, 0),
-            mar = c(bottom_mar(ord, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
+  op <- plot_frame(ord, k, c(rng[1] - 0.05 * h, top), ylab, res$label, model_note(opt, st$adjusted),
+                   adjust, opt, scale)
   on.exit(par(op))
-  plot(NA, xlim = c(0.5, k + 0.5), ylim = c(rng[1] - 0.05 * h, top),
-       xaxt = "n", xlab = "", ylab = ylab, las = 1)
-  x_labels(seq_len(k), ord, ang)
-  if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
-  if (k > 2) {
-    title(main = res$label, line = 2.6)
-    mtext(model_note(opt, st$adjusted), side = 3, line = 1.2, cex = 0.8 * par("cex"))
-    mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
-          side = 3, line = 0.3, cex = 0.8 * par("cex"))
-  } else {
-    title(main = res$label, line = 1.6)
-    mtext(model_note(opt, st$adjusted), side = 3, line = 0.4, cex = 0.8 * par("cex"))
-  }
 
   set.seed(1)
   side <- opt$type == "dots" && opt$layout == "side"
@@ -473,13 +484,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   key <- type_key(opt)
   if (show_dots) key <- rbind(data.frame(lab = "Sample", pch = 19, lty = NA, bg = NA, col = "grey40"), key)
   if (show_dots && opt$outliers && nrow(res$out)) key <- rbind(key, outlier_row)
-  if (NROW(key)) {
-    g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty,
-                lwd = 3, col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
-                cex = 0.8, y.intersp = 1.4)
-    ky <- g$rect$top - g$rect$h
-  }
-  star_key(opt, lx, ky)
+  key_legend(lx, ky, key, opt)
 }
 
 # All parameters in one figure: parameters on x, groups side by side
@@ -508,20 +513,11 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
   n_pairs <- if (opt$brackets) nrow(results[[1]]$pairs) else 0
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
-  ang <- label_angle(labels, opt)
-  op <- par(cex = min(1, min(dev.size("in")) / 5), tcl = -0.25, mgp = c(3, 0.6, 0),
-            mar = c(bottom_mar(labels, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
+  op <- plot_frame(labels, k, c(rng[1] - 0.05 * h, top),
+                   scale_label(sts[[1]], if (is.null(main)) "Value" else main, opt),
+                   if (is.null(main)) paste(ord, collapse = " vs ") else main,
+                   model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), adjust, opt, sts[[1]]$scale)
   on.exit(par(op))
-  plot(NA, xlim = c(0.5, n + 0.5), ylim = c(rng[1] - 0.05 * h, top), xaxt = "n",
-       xlab = "", ylab = scale_label(sts[[1]], if (is.null(main)) "Value" else main, opt), las = 1)
-  x_labels(seq_len(n), labels, ang)
-  if (sts[[1]]$scale != "raw") abline(h = 1, lty = 3, col = "grey60")
-  title(main = if (is.null(main)) paste(ord, collapse = " vs ") else main,
-        line = if (k > 2) 2.6 else 1.6)
-  mtext(model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), side = 3, line = if (k > 2) 1.2 else 0.4,
-        cex = 0.8 * par("cex"))
-  if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
-                   side = 3, line = 0.3, cex = 0.8 * par("cex"))
 
   set.seed(1)
   show_dots <- opt$type == "dots" || opt$dots
@@ -579,13 +575,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
   key <- type_key(opt)
   if (show_dots && opt$outliers && any(vapply(results, function(r) nrow(r$out) > 0, TRUE)))
     key <- rbind(key, outlier_row)
-  if (NROW(key)) {
-    g <- legend(lx, ky, legend = key$lab, pch = key$pch, lty = key$lty, lwd = 3,
-                col = key$col, pt.bg = key$bg, pt.lwd = 1, bty = "n", xpd = TRUE,
-                cex = 0.8, y.intersp = 1.4)
-    ky <- g$rect$top - g$rect$h
-  }
-  star_key(opt, lx, ky)
+  key_legend(lx, ky, key, opt)
 }
 
 # Group name before the last _ (Ctrl_M, Ctrl_F -> Ctrl)
@@ -610,8 +600,7 @@ split_prep <- function(p, var) {
 }
 
 # Advanced: does the group difference change between subsets? (Group x Subset, all cells)
-split_interaction <- function(p, var, label, design) {
-  d <- split_prep(p, var)$datos
+split_interaction <- function(d, var, label, design) {
   d <- droplevels(d[!is.na(d[[var]]), ])
   out <- function(F = NA, df1 = NA, df2 = NA, pv = NA, note = "")
     data.frame(Parameter = label, "F" = F, "df (Group \u00d7 Subset)" = df1, "df (error)" = df2,
@@ -806,6 +795,12 @@ welcome_page <- function() {
   model <- function(add) tags$code("y ~ Tx +", base, tags$span(class = "mmc-add", paste("+", add)))
   card <- function(title, text, pic, add) div(class = "border rounded p-2 mmc-card",
     div(strong(title), p(class = "small mb-0", text)), pic, div(class = "small", model(add)))
+  one_file <- paste("One file should be related to one experiment. Batch = your main batch source: the",
+                    "culture batch if you track it, otherwise the coverslip or plate.")
+  nested_sheet <- function(caption) batch_sheet(list(
+    c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
+    c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
+    c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")), caption, "(1|Line/Batch)")
   div(class = "p-2", style = "max-width: 900px;",
     h3("Welcome to Mixed Model Correction!"),
     conditionalPanel("!input.advanced", p(class = "text-muted mb-2",
@@ -823,23 +818,12 @@ welcome_page <- function() {
       step("4", "Run models", "Results and plots open in the tabs")),
     conditionalPanel("!input.advanced",
       h5(class = "mt-4", "Batches"),
-      p("One file should be related to one experiment. Batch = your main batch source: the culture",
-        "batch if you track it, otherwise the coverslip or plate. Number each line's batches B1, B2."),
-      div(style = "max-width: 420px;", batch_sheet(list(
-        c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
-        c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
-        c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
-        "Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each.",
-        "(1|Line/Batch)")),
-      tags$ul(class = "small text-muted mt-2",
-        tags$li("Same line in several groups (e.g. vehicle and drug): use the same Line label."),
-        tags$li("Treatment applied per coverslip or well: use the coverslip or well as Batch."),
-        tags$li("Plates or recording days shared by several lines, matched clone pairs and line-specific",
-                "treatment effects are in Advanced designs."))),
+      p(one_file, "Number each line's batches B1, B2."),
+      div(style = "max-width: 420px;",
+        nested_sheet("Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each."))),
     conditionalPanel("input.advanced",
       h5(class = "mt-4", "Batch design (Advanced)"),
-      p("Pick the experiment design. One file should be related to one experiment. Batch = your main",
-        "batch source: the culture batch if you track it, otherwise the coverslip or plate."),
+      p("Pick the experiment design.", one_file),
       flow_pic(),
       p(class = "small text-muted", "A line in several batches is normal in both designs. Crossed only",
         "if one batch held more than one line."),
@@ -850,12 +834,7 @@ welcome_page <- function() {
             "or a qPCR plate that held one line (plate confounded with line). Number each",
             "line's batches B1, B2…")),
           nested_pic(),
-          div(batch_sheet(list(
-            c("Control", "L1", "B1", "g"), c("Control", "L1", "B2", "p"),
-            c("AD", "L2", "B1", "o"), c("AD", "L2", "B2", "b"),
-            c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
-            "L2's B1 is not L1's B1. L3 and L4 have one batch each.",
-            "(1|Line/Batch)"))),
+          div(nested_sheet("L2's B1 is not L1's B1. L3 and L4 have one batch each."))),
         div(class = "border rounded p-2 mmc-card",
           div(strong("Crossed (some ephys, most qPCR)"), p(class = "small mb-0",
             "A plate, or a recording day, that held several lines and was repeated on other",
@@ -868,6 +847,12 @@ welcome_page <- function() {
             c("AD", "L2", "B2", "p"), c("AD", "L4", "B2", "p")),
             "B1 is one day or plate for every line.",
             "(1|Line) + (1|Batch) + (1|Line:Batch)"))))),
+    # Data-entry rules, both modes
+    tags$ul(class = "small text-muted mt-2",
+      tags$li("Same line in several groups (e.g. vehicle and drug): use the same Line label."),
+      tags$li("Treatment applied per coverslip or well: use the coverslip or well as Batch."),
+      tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Plates or recording days shared",
+              "by several lines, matched clone pairs and line-specific treatment effects are in Advanced designs.")),
     h5(class = "mt-4", "Which model runs"),
     tags$table(class = "table table-sm w-auto mb-1",
       tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
@@ -891,8 +876,6 @@ welcome_page <- function() {
         card("Both", paste("Matched lines, each in several groups (parental and corrected, each with",
              "vehicle and drug): background removed, and each line can respond differently."),
              both_pic(), "(1|Pair) + (1|Line:Tx)")),
-      p(class = "small text-muted mt-2", "Same line in several groups: use the same Line label. Treatment",
-        "applied per coverslip or well: use the coverslip or well as Batch."),
       h5(class = "mt-4", "Comparisons"),
       p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
         "selected comparisons (Holm). Tables and plot brackets show only the tested pairs. With each vs",
@@ -1081,9 +1064,6 @@ ui <- page_sidebar(
     nav_panel("Pairwise",
       radioButtons("pairs_view", NULL, inline = TRUE, choices = c(
         "Groups as entered" = "groups", "Split and combined" = "split")),
-      conditionalPanel("input.pairs_view == 'split'",
-        helpText("Ctrl_M and Ctrl_F: Ctrl in subsets M and F, plus Combined. Each subset",
-                 "is its own model.")),
       helpText("Fold-change columns (2^-estimate) appear when the plot Y axis is set",
                "to fold change (ΔCt data)."),
       tableOutput("pairs_table"),
@@ -1352,11 +1332,12 @@ server <- function(input, output, session) {
          base = tools::file_path_sans_ext(input$file$name))
   })
 
+  param_labels <- reactive(vapply(results()$res, `[[`, "", "label"))
   observeEvent(results(), {
     nav_select("tabs", "ANOVA results")
-    labels <- vapply(results()$res, `[[`, "", "label")
-    updateSelectInput(session, "plot_param", choices = labels)
-    updateSelectizeInput(session, "multi", choices = labels, selected = labels)
+    updateSelectInput(session, "plot_param", choices = param_labels())
+    updateSelectizeInput(session, "multi", choices = param_labels(), selected = param_labels())
+    updateSelectInput(session, "resid_param", choices = param_labels())
   })
 
   # Group order: reset to reference first on new data or reference
@@ -1482,20 +1463,17 @@ server <- function(input, output, session) {
   }
   output$anova_table <- renderTable(show_p(anova_df()), digits = 4)
 
-  # Residual checks, drawn only when shown
-  observeEvent(results(), updateSelectInput(session, "resid_param",
-    choices = vapply(results()$res, `[[`, "", "label")))
   output$adj_note <- renderUI({
     r <- tryCatch(results(), error = function(e) NULL)
     sel <- if (is.null(r)) NULL else if (identical(input$fig, "all"))
-      r$res[vapply(r$res, `[[`, "", "label") %in% input$multi] else list(current())
+      r$res[param_labels() %in% input$multi] else list(current())
     msg <- unique(vapply(sel, function(x) adj_text(x$rand), ""))
     helpText(if (length(msg) == 1) msg else "Batch shifts removed.", "Display only.")
   })
 
   output$resid_plot <- renderPlot({
     r <- results()
-    x <- r$res[[match(input$resid_param, vapply(r$res, `[[`, "", "label"))]]
+    x <- r$res[[match(input$resid_param, param_labels())]]
     req(x)
     rs <- residuals(x$MM_Form, type = "pearson", scaled = TRUE)
     col <- ifelse(abs(rs) > 3, "red", "grey40")
@@ -1545,7 +1523,7 @@ server <- function(input, output, session) {
   current <- reactive({
     x <- cmp_res()
     req(input$plot_param)
-    x[[match(input$plot_param, vapply(x, `[[`, "", "label"))]]
+    x[[match(input$plot_param, param_labels())]]
   })
 
   opt <- reactive(list(type = input$type, layout = input$layout, dots = input$dots,
@@ -1568,14 +1546,14 @@ server <- function(input, output, session) {
   split_all <- reactive({
     r <- results()
     sps <- lapply(r$res, function(x) split_prep(r$prep, x$var))
-    labels <- vapply(r$res, `[[`, "", "label")
+    labels <- param_labels()
     withProgress(message = "Fitting split models", value = 0,
       setNames(Map(function(sp, lab, x) {
         res <- tryCatch(run_models(sp, sp$MM_Vars, function(n, label)
                           incProgress(1 / (n * length(sps)), detail = paste(lab, label)),
                           r$design, r$line_tx),
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
-        inter <- if (isTRUE(r$advanced)) tryCatch(split_interaction(r$prep, x$var, lab, r$design),
+        inter <- if (isTRUE(r$advanced)) tryCatch(split_interaction(sp$datos, x$var, lab, r$design),
                                                 error = function(e) NULL)
         list(prep = sp, res = res, inter = inter)
       }, sps, labels, r$res), labels))
@@ -1586,7 +1564,7 @@ server <- function(input, output, session) {
     adj <- cmp_adjust()
     if (identical(input$fig, "all")) {
       x <- cmp_res()
-      sel <- x[vapply(x, `[[`, "", "label") %in% input$multi]
+      sel <- x[param_labels() %in% input$multi]
       validate(need(length(sel) > 0, "Select at least one parameter."))
       draw_multi(r$prep$datos, sel, adj, opt())
     } else if (identical(input$fig, "split")) {
