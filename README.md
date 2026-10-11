@@ -96,7 +96,9 @@ Statistics always use the values as entered.
 from the plotted values, using the model's random-effect estimates (BLUPs):
 each line's batch-to-batch deviation. For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
 
-A reference (control) group sets the comparison direction in tables and plots.
+Comparisons read as the group plotted later minus the one plotted earlier. The
+reference (control) group plots first, so its comparisons read other −
+reference; reordering the groups flips a comparison. P-values don't change.
 Significance can be shown as p-values or stars (ns, *, **, ***, ****).
 
 Groups appear in CSV order (reference first) and can be reordered by

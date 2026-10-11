@@ -1171,7 +1171,8 @@ all parameters in a run.
 
 **Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted
 (p-values and CIs).
-The reference group sets direction only; p-values don't change.
+Comparisons read later minus earlier group in plot order (reference first);
+p-values don't change.
 
 **Plots.** Display only; statistics always use the values as entered.
 Model CI/SE match the statistics; SEM/SD ignore Line and Batch.
@@ -1227,11 +1228,19 @@ server <- function(input, output, session) {
                          choices = setNames(p$MM_Vars, p$parameter_labels),
                          selected = p$MM_Vars[p$numeric])
     lev <- levels(p$datos$Tx)
-    prs <- combn(lev, 2)
-    updateSelectizeInput(session, "sel_pairs", selected = character(),
-      choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"), paste(prs[1, ], "vs", prs[2, ])))
     ctrl <- grep("^(control|ctrl|gfp)", lev, ignore.case = TRUE, value = TRUE)
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
+  })
+
+  # Comparison picker: labelled later vs earlier group in plot order, as in the tables
+  observe({
+    d <- prep()$datos
+    ord <- tx_order(d, list(order = tx_ord(), ref = input$ref))
+    prs <- combn(levels(d$Tx), 2)
+    later <- match(prs[1, ], ord) > match(prs[2, ], ord)
+    updateSelectizeInput(session, "sel_pairs", selected = isolate(input$sel_pairs),
+      choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"),
+                         ifelse(later, paste(prs[1, ], "vs", prs[2, ]), paste(prs[2, ], "vs", prs[1, ]))))
   })
 
   # Box plots default to no mean/error bar; restore SEM when leaving box
@@ -1393,7 +1402,7 @@ server <- function(input, output, session) {
     })
   })
 
-  # Tables follow the reference group and group order; pairs as "other - Ref"
+  # Tables follow the reference group and group order; pairs as "later - earlier"
   ref_order <- reactive({
     lev <- levels(results()$prep$datos$Tx)
     ref <- if (isTRUE(input$ref %in% lev)) input$ref else lev[1]
@@ -1433,15 +1442,16 @@ server <- function(input, output, session) {
   }))
 
   pairs_df <- reactive({
-    ref <- ref_order()$ref
+    ord <- ref_order()$ord
     tab <- function(x) cbind(x$pairs, DF_method = "Kenward-Roger",
                              P_adjust = adjust_label(cmp_adjust(), nrow(x$means)))
     if (identical(input$pairs_view, "split")) {
-      s <- cmp_split(); ref <- pool_name(ref)
+      s <- cmp_split(); ord <- unique(pool_name(ord))
       df <- do.call(rbind, Map(function(p, x) do.call(rbind, lapply(x$res, function(r)
         cbind(Parameter = p, Subset = r$label, tab(r)))), names(s), s))
     } else df <- do.call(rbind, lapply(cmp_res(), function(x) cbind(Parameter = x$label, tab(x))))
-    flip <- df$.a == ref
+    # Each comparison as the group plotted later minus the one plotted earlier (reference first)
+    flip <- match(df$.a, ord) < match(df$.b, ord)
     a <- ifelse(flip, df$.b, df$.a); b <- ifelse(flip, df$.a, df$.b)
     df$contrast <- paste(a, "-", b)
     df$estimate <- ifelse(flip, -df$estimate, df$estimate)
