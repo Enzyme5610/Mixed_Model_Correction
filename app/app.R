@@ -72,6 +72,10 @@ base_term <- function(datos, design = "nested") {
   else stop("Something is wrong with the number of Lines or Batches. Please check your data.")
 }
 
+# Random-effect terms in plain words (singular-fit warnings)
+term_names <- c(Line = "line-to-line variation", "Line:Batch" = "batch-to-batch variation within lines",
+                Batch = "shared batch shift", Pair = "pair background", "Line:Tx" = "line-specific treatment effect")
+
 run_models <- function(prep, vars, progress = function(n, label) NULL,
                        design = "nested", line_tx = FALSE) {
   datos <- prep$datos
@@ -100,12 +104,14 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
         warn <<- c(warn, conditionMessage(w))
         invokeRestart("muffleWarning")
       },
-      # lme4 reports a singular fit as a message
-      message = function(m) if (grepl("singular", conditionMessage(m))) {
-        warn <<- c(warn, "singular fit: a random-effect variance was estimated as zero, so that term has no effect")
-        invokeRestart("muffleMessage")
-      }
+      # lme4's singular-fit message; named below instead
+      message = function(m) if (grepl("singular", conditionMessage(m))) invokeRestart("muffleMessage")
     )
+    # Singular fit: name the random-effect terms estimated as zero
+    th <- lme4::getME(res$MM_Form, "theta")
+    zero <- unique(sub("^Batch:Line$", "Line:Batch", sub("\\..*$", "", names(th)[th < 1e-4])))
+    if (length(zero)) warn <- c(warn, paste0("singular fit: ", paste0(term_names[zero], " (", zero, ")", collapse = ", "),
+      " estimated as zero, so ", if (length(zero) > 1) "those terms have" else "that term has", " no effect"))
     result_table <- as.data.frame(res$anova)
     res$table <- data.frame(
       Parameter = label,
