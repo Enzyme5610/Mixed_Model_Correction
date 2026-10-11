@@ -47,13 +47,19 @@ AD,L5,B1,5.02,7.44
 ## Model
 
 **Nested** (the regular version): `parameter ~ Tx + (1 | Line/Batch)`, fit with
-`lmerTest::lmer`, with Tx tested by a Type II F test using Kenward-Roger
-degrees of freedom. With one Line the model uses `(1 | Batch)`; with one
-Batch, or no line with repeat batches, `(1 | Line)`. Pairwise comparisons use
-`emmeans`.
+`lmerTest::lmer` (REML), with Tx tested by a Type II F test using the
+Kenward-Roger method (small-sample corrected standard errors and degrees of
+freedom). With one Line the model uses `(1 | Batch)`; with one Batch, or no
+line with repeat batches, `(1 | Line)`. Pairwise comparisons use `emmeans`;
+their confidence intervals use the same adjustment. Exact calls:
+[Methods](#methods).
+
+**Model warnings** (e.g. no convergence, or a singular fit: a variance
+estimated as zero, so that term has no effect) are listed under ANOVA results.
 
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
-(e.g. gene panels). Adjusts Tx p-values across all parameters in a run.
+(e.g. gene panels). Adjusts the Tx p-values (not pairwise) across all
+parameters in a run.
 
 **Possible outliers:** cells more than 3 SD from the model's prediction for
 their group, line and batch (scaled residual). Circled in red and listed
@@ -102,7 +108,9 @@ needs every subset. Does not test whether subsets differ.
 ## Advanced designs
 
 Turn on **Advanced designs** in the sidebar. Everything above still applies;
-Advanced adds the following.
+Advanced adds the following. The sidebar's example file then switches to one
+with every Advanced feature: parental and corrected clones (matched lines),
+each with vehicle and drug, on plates shared by all lines.
 
 **Crossed batch design** (some ephys, most qPCR): runs that held several lines
 and were repeated on other days (qPCR plate, or several lines recorded the
@@ -134,12 +142,36 @@ line-specific effects work with nested and crossed.
 **Group × Subset interaction** (Pairwise tab, Split and combined view): does
 the group difference change between subsets? With names like `Ctrl_veh,
 Ctrl_drug, KO_veh, KO_drug` this is genotype × treatment. Needs 2+ lines per
-subset.
+subset. Model: `parameter ~ Group * Subset + <random effects> + (1 | Line:Group)`,
+with a Kenward-Roger F test of Group × Subset.
 
 **Comparisons:** all pairs (Tukey or Bonferroni), each group vs the reference
-(Dunnett), or selected pairs (Holm). Same model, no refit; tables and plot
-brackets show only the tested pairs. With each vs reference, the reference
-group decides which comparisons are tested.
+(Dunnett, emmeans' `dunnettx` approximation), or selected comparisons (Holm;
+their confidence intervals use Bonferroni). Same model, no refit; tables and
+plot brackets show only the tested pairs. With each vs reference, the
+reference group decides which comparisons are tested.
+
+## Methods
+
+What runs for each parameter, with links to each package's documentation:
+
+| Step | R call | Docs |
+|---|---|---|
+| Fit | `lmerTest::lmer(parameter ~ Tx + <random effects>, REML = TRUE)` | [lme4](https://CRAN.R-project.org/package=lme4), [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
+| Tx test | `anova(fit, type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest), [pbkrtest](https://CRAN.R-project.org/package=pbkrtest) |
+| Model means, SE, 95% CI | `emmeans(fit, "Tx", lmer.df = "kenward-roger")` | [emmeans: models](https://rvlenth.github.io/emmeans/articles/sophisticated.html) |
+| All pairs | `pairs(emm, adjust = "tukey")` or `"bonferroni"` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
+| Each vs reference (Advanced) | `contrast(emm, "trt.vs.ctrl", adjust = "dunnettx")` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
+| Selected comparisons (Advanced) | `contrast(emm, <chosen pairs>, adjust = "holm")` | [emmeans: confidence intervals](https://rvlenth.github.io/emmeans/articles/confidence-intervals.html) |
+| Group × Subset (Advanced) | `anova(lmer(parameter ~ Group * Subset + <random effects> + (1 \| Line:Group)), type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
+| FDR q-values | `p.adjust(p, "BH")` across parameters | [stats](https://stat.ethz.ch/R-manual/R-devel/library/stats/html/p.adjust.html) |
+| Possible outliers | `residuals(fit, type = "pearson", scaled = TRUE)` beyond ±3 | [lme4](https://CRAN.R-project.org/package=lme4) |
+| Batch-adjusted values | `lme4::ranef(fit)` (BLUPs) | [lme4](https://CRAN.R-project.org/package=lme4) |
+
+Kenward-Roger corrects both the standard errors and the degrees of freedom for
+small samples. Pairwise confidence intervals use the same adjustment as their
+p-values, except Holm, which has no interval version: those intervals use
+Bonferroni. `dunnettx` is emmeans' approximation to Dunnett's test.
 
 ## Credits
 
@@ -163,6 +195,7 @@ by loading.io (MIT License, © 2017 loading.io).
   data. *Nature Neuroscience* 17(4):491–496.
 - Bates D, Mächler M, Bolker B, Walker S (2015). Fitting linear mixed-effects
   models using lme4. *Journal of Statistical Software* 67(1):1–48.
+  doi:10.18637/jss.v067.i01
 - Benjamini Y, Hochberg Y (1995). Controlling the false discovery rate: a
   practical and powerful approach to multiple testing. *Journal of the Royal
   Statistical Society: Series B* 57(1):289–300.
@@ -178,6 +211,7 @@ by loading.io (MIT License, © 2017 loading.io).
 - Halekoh U, Højsgaard S (2014). A Kenward-Roger approximation and parametric
   bootstrap methods for tests in linear mixed models – the R package
   pbkrtest. *Journal of Statistical Software* 59(9):1–32.
+  doi:10.18637/jss.v059.i09
 - Johnson P (2026). devEMF: EMF graphics output device. R package version 4.6.
   doi:10.32614/CRAN.package.devEMF
 - Kenward MG, Roger JH (1997). Small sample inference for fixed effects from
@@ -186,7 +220,7 @@ by loading.io (MIT License, © 2017 loading.io).
   unequal numbers of replications. *Biometrics* 12(3):307–310.
 - Kuznetsova A, Brockhoff PB, Christensen RHB (2017). lmerTest package: tests
   in linear mixed effects models. *Journal of Statistical Software*
-  82(13):1–26.
+  82(13):1–26. doi:10.18637/jss.v082.i13
 - Lenth R, Piaskowski J (2026). emmeans: Estimated marginal means, aka
   least-squares means. R package version 2.0.4.
   doi:10.32614/CRAN.package.emmeans

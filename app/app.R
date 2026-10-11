@@ -10,9 +10,11 @@ library(emmeans)
 prepare_data <- function(path) {
   datos <- read.csv(path, header = TRUE, check.names = FALSE, na.strings = c("", "NA"))
   original_names <- names(datos)
-  if (!"Tx" %in% original_names) stop("The table must include a column named Tx.")
+  if (!all(c("Tx", "Line", "Batch") %in% original_names))
+    stop("The table must include columns named Tx, Line and Batch.")
   names(datos) <- make.names(original_names, unique = TRUE)
   datos <- datos[!is.na(datos$Tx), ]  # drop empty rows
+  if (anyNA(datos$Line) || anyNA(datos$Batch)) stop("Line and Batch must be filled in on every row.")
   # Levels in CSV order
   for (v in intersect(c("Tx", "Line", "Batch"), names(datos)))
     datos[[v]] <- factor(datos[[v]], levels = unique(datos[[v]]))
@@ -97,6 +99,11 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
       warning = function(w) {
         warn <<- c(warn, conditionMessage(w))
         invokeRestart("muffleWarning")
+      },
+      # lme4 reports a singular fit as a message
+      message = function(m) if (grepl("singular", conditionMessage(m))) {
+        warn <<- c(warn, "singular fit: a random-effect variance was estimated as zero, so that term has no effect")
+        invokeRestart("muffleMessage")
       }
     )
     result_table <- as.data.frame(res$anova)
@@ -126,7 +133,7 @@ adjust_label <- function(adjust, k) {
   c(tukey = "Tukey", bonferroni = "Bonferroni", dunnett = "Dunnett", holm = "Holm")[[adjust]]
 }
 
-# Comparisons from the model's means: all pairs, each vs reference (Dunnett) or selected pairs
+# Comparisons from the model's means: all pairs, each vs reference (Dunnett) or selected comparisons
 comparisons <- function(res, mode = "all", adjust = "tukey", ref = NULL, sel = NULL) {
   lev <- as.character(res$means$Tx)
   prs <- combn(lev, 2)  # emmeans pair order
@@ -240,6 +247,7 @@ plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "li
 # Each row's estimated batch shift from the model, all batch terms summed (NULL if none)
 batch_shift <- function(datos, res) {
   re <- lme4::ranef(res$MM_Form)
+  # ranef names: "Batch:Line" from Line/Batch, "Line:Batch" from crossed
   keys <- list(Batch = as.character(datos$Batch),
                "Batch:Line" = paste(datos$Batch, datos$Line, sep = ":"),
                "Line:Batch" = paste(datos$Line, datos$Batch, sep = ":"))
@@ -802,7 +810,8 @@ welcome_page <- function() {
     h3("Welcome to Mixed Model Correction!"),
     conditionalPanel("!input.advanced", p(class = "text-muted mb-2",
       "Nested model. Crossed and other designs: Advanced designs switch in the sidebar.")),
-    conditionalPanel("input.advanced", p(class = "text-muted mb-2", "Advanced: nested and crossed models.")),
+    conditionalPanel("input.advanced", p(class = "text-muted mb-2", "Advanced: nested and crossed models. The",
+      "example file (sidebar) now has every Advanced feature.")),
     p("Tests treatment effects on cells grouped in lines and batches. Replaces the",
       "t-test and one-way ANOVA for this kind of data. Runs in your browser; your",
       "data stays on your computer."),
@@ -822,10 +831,11 @@ welcome_page <- function() {
         c("Control", "L3", "B1", "y"), c("AD", "L4", "B1", "k")),
         "Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each.",
         "(1|Line/Batch)")),
-      p(class = "small text-muted mt-2", "One plate or day with several lines, or matched clone pairs:",
-        "Advanced designs. Same line in several groups (e.g. vehicle and drug, or control and KD)? Use",
-        "the same line label; if treated per coverslip or well, Batch = coverslip or well. Advanced designs",
-        "then offers \u201cAllow line-specific treatment effects\u201d.")),
+      tags$ul(class = "small text-muted mt-2",
+        tags$li("Same line in several groups (e.g. vehicle and drug): use the same Line label."),
+        tags$li("Treatment applied per coverslip or well: use the coverslip or well as Batch."),
+        tags$li("Plates or recording days shared by several lines, matched clone pairs and line-specific",
+                "treatment effects are in Advanced designs."))),
     conditionalPanel("input.advanced",
       h5(class = "mt-4", "Batch design (Advanced)"),
       p("Pick the experiment design. One file should be related to one experiment. Batch = your main",
@@ -881,11 +891,11 @@ welcome_page <- function() {
         card("Both", paste("Matched lines, each in several groups (parental and corrected, each with",
              "vehicle and drug): background removed, and each line can respond differently."),
              both_pic(), "(1|Pair) + (1|Line:Tx)")),
-      p(class = "small text-muted mt-2", "Same line in several groups? Use the same line label; if treated",
-        "per coverslip or well, Batch = coverslip or well."),
+      p(class = "small text-muted mt-2", "Same line in several groups: use the same Line label. Treatment",
+        "applied per coverslip or well: use the coverslip or well as Batch."),
       h5(class = "mt-4", "Comparisons"),
       p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
-        "selected pairs (Holm). Tables and plot brackets show only the tested pairs. With each vs",
+        "selected comparisons (Holm). Tables and plot brackets show only the tested pairs. With each vs",
         "reference, the reference group decides which comparisons are tested.")),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
@@ -1012,7 +1022,8 @@ ui <- page_sidebar(
       #design .radio { margin-bottom: .6rem; }"),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
     helpText("Needs columns named Tx, Line and Batch (exact spelling), in any position."),
-    actionLink("example", "Download an example file"),
+    actionLink("example", tagList("Download an example file", tags$span(`data-display-if` = "input.advanced",
+                                                                     `data-ns-prefix` = "", "(Advanced)"))),
     hr(),
     selectizeInput("params", "2. Parameters to analyze", choices = NULL,
                    multiple = TRUE, options = list(plugins = list("remove_button"))),
@@ -1028,13 +1039,13 @@ ui <- page_sidebar(
     hr(),
     conditionalPanel("input.advanced",
       radioButtons("cmp", "3. Comparisons", choices = c(
-        "All pairs" = "all", "Each vs reference (Dunnett)" = "ref", "Selected pairs (Holm)" = "sel"))),
+        "All pairs" = "all", "Each vs reference (Dunnett)" = "ref", "Selected comparisons (Holm)" = "sel"))),
     conditionalPanel("!input.advanced || input.cmp == 'all'",
       radioButtons("adjust", tagList(tags$span(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "3."),
                                      "Pairwise p-value adjustment"),
                    choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni"))),
     conditionalPanel("input.advanced && input.cmp == 'sel'",
-      selectizeInput("sel_pairs", "Pairs to test", choices = NULL, multiple = TRUE,
+      selectizeInput("sel_pairs", "Comparisons to test", choices = NULL, multiple = TRUE,
                      options = list(plugins = list("remove_button"), placeholder = "All pairs"))),
     selectInput("ref", "Reference (control) group", choices = NULL),
     conditionalPanel("!(input.advanced && input.cmp == 'ref')",
@@ -1164,15 +1175,17 @@ ui <- page_sidebar(
     nav_panel("About",
       markdown("
 **Model.** Regular version: nested, `parameter ~ Tx + (1 | Line/Batch)`, fit
-with `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger df.
-One Line: `(1 | Batch)`. One Batch, or no line with repeat batches:
-`(1 | Line)`.
+with `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger method
+(small-sample corrected SEs and df). One Line: `(1 | Batch)`. One Batch, or no
+line with repeat batches: `(1 | Line)`. Warnings, including singular fits (a
+variance estimated as zero), appear under ANOVA results.
 
 **FDR.** q-values (Benjamini-Hochberg) for panels of many similar
-parameters (e.g. gene panels). Adjusts Tx p-values across all parameters in
-a run.
+parameters (e.g. gene panels). Adjusts the Tx p-values (not pairwise) across
+all parameters in a run.
 
-**Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted.
+**Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted
+(p-values and CIs).
 The reference group sets direction only; p-values don't change.
 
 **Plots.** Display only; statistics always use the values as entered.
@@ -1189,8 +1202,14 @@ them.
 - **Allow line-specific treatment effects** (same line in several groups):
   adds `(1 | Line:Tx)`. Each line can respond differently; the test then asks
   whether the effect holds across lines. Needs several lines.
-- **Group \u00d7 Subset interaction** (Split and combined).
-- **Comparisons:** each vs reference (Dunnett) or selected pairs (Holm).
+- **Group \u00d7 Subset interaction** (Split and combined): `Group * Subset` model
+  with `(1 | Line:Group)`, Kenward-Roger F test.
+- **Comparisons:** each vs reference (Dunnett, emmeans' dunnettx approximation)
+  or selected comparisons (Holm; CIs use Bonferroni).
+
+Package documentation: [lme4](https://CRAN.R-project.org/package=lme4) \u00b7 [lmerTest](https://CRAN.R-project.org/package=lmerTest) \u00b7
+[pbkrtest](https://CRAN.R-project.org/package=pbkrtest) \u00b7 [emmeans](https://CRAN.R-project.org/package=emmeans). Exact calls:
+[README](https://github.com/Enzyme5610/Mixed_Model_Correction#methods).
 
 ---
 
@@ -1248,7 +1267,7 @@ server <- function(input, output, session) {
     x$pairs <- comparisons(x, cmp_mode(), cmp_adjust(), ref, sel)
     x
   }
-  # Selected pairs in pooled names (Split and combined)
+  # Selected comparisons in pooled names (Split and combined)
   pool_sel <- function() unique(vapply(strsplit(as.character(input$sel_pairs), "|", fixed = TRUE),
                                        function(p) paste(pool_name(p), collapse = "|"), ""))
 
@@ -1634,9 +1653,10 @@ server <- function(input, output, session) {
     })
   })
 
+  # Example file: regular, or one with every Advanced feature
   observeEvent(input$example, {
-    save_file("example_data.csv", "text/csv",
-              function(f) file.copy("example_data.csv", f))
+    ex <- if (isTRUE(input$advanced)) "example_advanced.csv" else "example_data.csv"
+    save_file(ex, "text/csv", function(f) file.copy(ex, f))
   })
 }
 
