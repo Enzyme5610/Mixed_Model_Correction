@@ -165,9 +165,8 @@ comparisons <- function(res, mode = "all", adjust = "bonferroni", ref = NULL) {
 
 # ---- Plot --------------------------------------------------------------------
 
-# p-values to 4 decimals, "< 0.0001" below (tables and plots)
-p_text <- function(p) ifelse(is.na(p), NA, ifelse(p < 0.0001, "< 0.0001", sprintf("%.4f", p)))
-format_p <- function(p) ifelse(is.na(p) | p >= 0.0001, paste("p =", p_text(p)), "p < 0.0001")
+# Plot p-values: 4 decimals, "< 0.0001" below
+format_p <- function(p) ifelse(is.na(p) | p >= 0.0001, paste("p =", sprintf("%.4f", p)), "p < 0.0001")
 
 # Bracket label: p-value or GraphPad Prism-style stars
 sig_label <- function(p, opt) {
@@ -1584,9 +1583,11 @@ server <- function(input, output, session) {
     df
   })
 
-  # p-values to 4 decimals on screen; CSVs keep full precision
+  # 3 sig. figs on screen, small values kept; CSVs keep full precision
   show_p <- function(df) {
-    for (col in intersect(c("p", "q (FDR)", "p.value"), names(df))) df[[col]] <- p_text(df[[col]])
+    for (col in intersect(c("p", "q (FDR)", "p.value"), names(df))) {
+      df[[col]] <- as.character(signif(df[[col]], 3))
+    }
     df
   }
   output$anova_table <- renderTable(show_p(anova_df()), digits = 4)
