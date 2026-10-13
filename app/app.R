@@ -618,22 +618,30 @@ split_prep <- function(p, var) {
   list(datos = d, MM_Vars = c(vars, ".split_all"), parameter_labels = c(parts, "Combined"))
 }
 
-# Advanced: does the group difference change between subsets? (Group x Subset, all cells)
+# Does the group difference change between subsets? (Group x Subset, all cells)
+# 2 groups x 2 subsets: also the change, (g2 - g1 in s2) - (g2 - g1 in s1), with CI
 split_interaction <- function(d, var, label, design) {
   d <- droplevels(d[!is.na(d[[var]]), ])
-  out <- function(F = NA, df1 = NA, df2 = NA, pv = NA, note = "")
-    data.frame(Parameter = label, "F" = F, "df (Group \u00d7 Subset)" = df1, "df (error)" = df2,
-               p = pv, Note = note, check.names = FALSE)
+  g <- levels(d$Tx)
+  s <- levels(d$.subset)
+  none <- list(estimate = NA, lower.CL = NA, upper.CL = NA)
+  out <- function(F = NA, df1 = NA, df2 = NA, pv = NA, note = "", ic = none)
+    data.frame(Parameter = label, .g = paste(g, collapse = ", "), .s = paste(s, collapse = ", "),
+               Change = ic$estimate, lower.CL = ic$lower.CL, upper.CL = ic$upper.CL,
+               F = F, df1 = df1, df2 = df2, p = pv, Note = note)
   # Subsets that differ by line need several lines each, or it's a line difference
   if (any(tapply(d$Line, d$.subset, function(l) length(unique(l))) < 2))
     return(out(note = "Needs 2+ lines per subset"))
-  # Group within lines: its effect may differ by line
-  rand <- random_term(d, design, line_tx = TRUE)
+  # Group or subset within lines: its effect may differ by line
+  rand <- extra_terms(d, random_term(d, design, line_tx = TRUE), list(c("Line", ".subset")))
   m <- suppressMessages(suppressWarnings(lmerTest::lmer(reformulate(c("Tx * .subset", rand), var),
                                                         data = d, REML = TRUE)))
   a <- stats::anova(m, type = "II", ddf = "Kenward-Roger")["Tx:.subset", ]
   if (!is.finite(a[["F value"]]) || a[["F value"]] < 0) return(out(note = "Not estimable"))
-  out(a[["F value"]], a$NumDF, a$DenDF, a[["Pr(>F)"]])
+  ic <- if (length(g) == 2 && length(s) == 2) summary(emmeans::contrast(
+    emmeans::emmeans(m, ~ Tx * .subset, lmer.df = "kenward-roger"),
+    interaction = c("revpairwise", "revpairwise")), infer = TRUE) else none
+  out(a[["F value"]], a$NumDF, a$DenDF, a[["Pr(>F)"]], ic = ic)
 }
 
 # Batch labels used by more than one line (crossed needs one)
@@ -777,28 +785,16 @@ both_pic <- function() trend_pic(c("veh", "drug", "veh", "drug"),
   sheet_cols[c("g", "g", "p", "p")], c("", "Pair 1", "", "Pair 2"),
   svg_text(c(90, 210), 110, c("Parental", "Corrected"), 8))
 
-# Design flowchart: two yes/no questions
-flow_pic <- function() {
-  box <- function(x, w, lines) paste0(sprintf(
-    '<rect x="%g" y="10" width="%g" height="50" rx="6" fill="#f8f9fa" stroke="#999"/>', x, w),
-    svg_text(x + w / 2, c(30, 48), lines, 13))
-  pill <- function(x, y, s) paste0(sprintf(
-    '<rect x="%g" y="%g" width="100" height="32" rx="16" fill="#444"/>', x, y), sprintf(
-    '<text x="%g" y="%g" font-size="14" font-weight="600" text-anchor="middle" fill="#fff">%s</text>',
-    x + 50, y + 21, s))
-  arrow <- function(x1, y1, x2, y2, s, dx = 0, dy = -5) paste0(sprintf(
-    '<path d="M%g %gL%g %g" stroke="#666" marker-end="url(#mmc-ah)"/>', x1, y1, x2, y2),
-    svg_text((x1 + x2) / 2 + dx, (y1 + y2) / 2 + dy, s, 12))
-  HTML(paste0('<svg viewBox="0 0 620 150" class="mmc-flow" role="img">',
-    '<defs><marker id="mmc-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ',
-    'markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#666"/></marker></defs>',
-    box(10, 210, c("Is your batch a plate", "or a recording day?")), arrow(220, 35, 268, 35, "Yes"),
-    box(270, 190, c("Did one plate or day", "hold more than one line?")),
-    arrow(460, 35, 508, 35, "Yes"), pill(510, 19, "Crossed"),
-    arrow(115, 60, 115, 93, "No", 15, 5), pill(65, 95, "Nested"),
-    svg_text(115, 143, "culture batch, coverslip", 11),
-    arrow(365, 60, 365, 93, "No", 15, 5), pill(315, 95, "Nested"), "</svg>"))
-}
+# Advanced options: question, option, what it does (default-mode helper and Advanced cheat sheet)
+adv_qs <- list(
+  crossed = c("Did one plate or recording day hold more than one line?", "Batch design: Crossed",
+              "Removes the plate or day shift shared by those lines"),
+  pair = c("Do lines come in matched pairs from the same donor (e.g. parental and corrected clone)?",
+           "Matched lines", "Removes donor differences, so real effects are easier to detect"),
+  line_tx = c("Did the same line get more than one treatment (e.g. vehicle and drug)?",
+              "Allow line-specific treatment effects", "Lines can respond differently, so one line can't drive the result"),
+  cmp = c("Do you need only some comparisons (e.g. each group vs control)?",
+          "Comparisons: Each vs reference or Selected comparisons", "Fewer tests, so more power"))
 
 # Welcome tab: steps, batches, designs and fallbacks
 welcome_page <- function() {
@@ -852,9 +848,13 @@ welcome_page <- function() {
       div(style = "max-width: 420px;",
         nested_sheet("Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each."))),
     conditionalPanel("input.advanced",
-      h5(class = "mt-4", "Batch design (Advanced)"),
-      p("Pick the experiment design."),
-      flow_pic(),
+      h5(class = "mt-4", "Which options apply (Advanced)"),
+      tags$table(class = "table table-sm small mb-1",
+        tags$tr(tags$th("Question"), tags$th("If yes"), tags$th("Why")),
+        lapply(adv_qs, function(q) tags$tr(tags$td(q[1]), tags$td(strong(q[2])), tags$td(q[3])))),
+      p(class = "small text-muted", "None: the default nested model with all pairs. Choose from how the",
+        "experiment was run, not from the results."),
+      h5(class = "mt-4", "Batch design"),
       p(class = "small text-muted", "A line in several batches is normal in both designs. Crossed only",
         "if one batch held more than one line."),
       div(class = "mmc-designs",
@@ -879,9 +879,15 @@ welcome_page <- function() {
             "(1|Line) + (1|Batch) + (1|Line:Batch)"))))),
     # Data-entry rules, both modes
     tags$ul(class = "small text-muted mt-2",
-      tags$li("Same line in several groups (e.g. vehicle and drug): use the same Line label."),
-      tags$li(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "Plates or recording days shared",
-              "by several lines, matched clone pairs and line-specific treatment effects are in Advanced designs.")),
+      tags$li("Same line in several groups (e.g. vehicle and drug): use the same Line label.")),
+    # Default mode: opt-in helper for whether Advanced designs are needed
+    conditionalPanel("!input.advanced",
+      tags$details(class = "border rounded p-2 mt-3",
+        tags$summary("Not sure the default fits your experiment? Answer 4 questions."),
+        p(class = "small text-muted mt-2 mb-1", "Answer from how the experiment was run."),
+        lapply(names(adv_qs), function(k) radioButtons(paste0("need_", k), adv_qs[[k]][1], inline = TRUE,
+          width = "100%", choices = c(Yes = "yes", No = "no"), selected = character(0))),
+        uiOutput("need_result"))),
     h5(class = "mt-4", "Which model runs"),
     tags$table(class = "table table-sm w-auto mb-1",
       tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
@@ -913,12 +919,9 @@ welcome_page <- function() {
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own model."),
-    p(class = "small", `data-display-if` = "!input.advanced", `data-ns-prefix` = "",
-      "Does not test whether M and F differ (Advanced designs adds that test)."),
-    p(class = "small", `data-display-if` = "input.advanced", `data-ns-prefix` = "",
-      "Pairwise tab: a Group \u00d7 Subset interaction test asks whether the Ctrl vs KO difference",
-      "changes between M and F. Also genotype \u00d7 treatment (Ctrl_veh, Ctrl_drug, KO_veh, KO_drug).",
-      "Needs 2+ lines per subset."),
+    p(class = "small", "Significant in M but not in F doesn't mean M and F differ. The Group \u00d7 Subset",
+      "test (Pairwise tab) asks whether the Ctrl vs KO difference changes between M and F. Also",
+      "genotype \u00d7 treatment (Ctrl_veh, Ctrl_drug, KO_veh, KO_drug). Needs 2+ lines per subset."),
     div(class = "mmc-designs",
       div(class = "border rounded p-2 mmc-card",
         div(strong("Your file")),
@@ -1032,7 +1035,6 @@ ui <- page_sidebar(
       .mmc-step { border: 1px solid #dee2e6; border-radius: .5rem; padding: .4rem .6rem; flex: 1 1 110px; max-width: 160px; }
       .mmc-pic { display: block; width: 100%; max-width: 340px; margin: 2px 0; }
       .mmc-add { color: #0F6E56; font-weight: 700; background: #e3f1ed; border-radius: 3px; padding: 0 3px; }
-      .mmc-flow { display: block; width: 100%; max-width: 620px; margin: 4px 0 4px; }
       .mmc-designs { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
       .mmc-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: .25rem; }
       .mmc-designs.mmc-3 { grid-template-columns: 1fr 1fr 1fr; }
@@ -1103,10 +1105,11 @@ ui <- page_sidebar(
       uiOutput("fc_pairs"),
       tableOutput("pairs_table"),
       actionButton("dl_pairs", "Download pairwise (.csv)", icon = icon("download")),
-      conditionalPanel("input.pairs_view == 'split' && input.advanced",
+      conditionalPanel("input.pairs_view == 'split'",
         h6(class = "mt-4", "Group \u00d7 Subset interaction"),
-        helpText("Does the group difference change between subsets (e.g. KO effect in M vs F)?",
-                 "All cells, one model per parameter."),
+        helpText("Change: the group difference in one subset minus the other (the subset rows",
+                 "above). Its CI and p test whether the group difference changes between subsets.",
+                 "One model of all cells per parameter."),
         tableOutput("inter_table"))
     ),
     nav_panel("Plots", layout_sidebar(
@@ -1208,6 +1211,11 @@ all parameters in a run.
 Comparisons read later minus earlier group in plot order (reference first);
 p-values don't change.
 
+**Group \u00d7 Subset** (Split and combined): `Group * Subset` model, with
+`(1 | Line:Group)` or `(1 | Line:Subset)` for a factor that varies within lines;
+Kenward-Roger F test. With 2 groups and 2 subsets, also the change in the group
+difference between subsets, with 95% CI (`emmeans` interaction contrast).
+
 **Plots.** Display only; statistics always use the values as entered.
 Model CI/SE match the statistics; SEM/SD ignore Line and Batch.
 Batch-adjusted values subtract each batch's estimated shift; don't re-test
@@ -1222,8 +1230,6 @@ them.
 - **Allow line-specific treatment effects** (same line in several groups):
   adds `(1 | Line:Tx)`. Each line can respond differently; the test then asks
   whether the effect holds across lines. Needs several lines.
-- **Group \u00d7 Subset interaction** (Split and combined): `Group * Subset` model
-  with `(1 | Line:Group)`, Kenward-Roger F test.
 - **Comparisons:** each vs reference (Dunnett, emmeans' dunnettx approximation)
   or selected comparisons (Holm; CIs use Bonferroni).
 
@@ -1275,6 +1281,16 @@ server <- function(input, output, session) {
     prs <- combn(levels(prep()$datos$Tx), 2)
     updateSelectizeInput(session, "sel_pairs", selected = isolate(input$sel_pairs),
       choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"), pick_label(prs[1, ], prs[2, ])))
+  })
+
+  # Default-mode helper: the Advanced options the answers point to
+  output$need_result <- renderUI({
+    a <- vapply(names(adv_qs), function(k) { x <- input[[paste0("need_", k)]]; if (is.null(x)) "" else x }, "")
+    if (any(a == "yes")) div(class = "alert alert-info small py-1 px-2 mb-0",
+      "Turn on Advanced designs in the sidebar, then use:",
+      tags$ul(class = "mb-0", lapply(adv_qs[a == "yes"], function(q) tags$li(strong(q[2], .noWS = "after"), ": ", q[3]))))
+    else if (all(a == "no")) div(class = "alert alert-success small py-1 px-2 mb-0",
+      "The default mode fits your experiment.")
   })
 
   # Split and combined: skipped subsets, and picks within one pooled group (no counterpart)
@@ -1632,11 +1648,26 @@ server <- function(input, output, session) {
     if (is.null(o)) data.frame(Result = "None flagged") else o
   }, digits = 3)
   output$pairs_table <- renderTable(show_p(pairs_df()), digits = 4)
+  # Change read like the tables: later minus earlier group in plot order
   output$inter_table <- renderTable({
     o <- do.call(rbind, lapply(split_all(), `[[`, "inter"))
     validate(need(o, "Interaction test not available for these data."))
-    o
-  }, digits = 4)
+    ord <- unique(pool_name(ref_order()$ord))
+    g <- strsplit(o$.g, ", ", fixed = TRUE)
+    s <- strsplit(o$.s, ", ", fixed = TRUE)
+    two <- lengths(g) == 2 & lengths(s) == 2
+    flip <- two & vapply(g, function(x) isTRUE(match(x[2], ord) < match(x[1], ord)), TRUE)
+    a <- ifelse(flip, sapply(g, `[`, 1), sapply(g, `[`, 2))
+    b <- ifelse(flip, sapply(g, `[`, 2), sapply(g, `[`, 1))
+    lo <- o$lower.CL
+    show_p(data.frame(Parameter = o$Parameter,
+      Compares = ifelse(two, paste0(a, " - ", b, ": ", sapply(s, `[`, 2), " minus ", sapply(s, `[`, 1)),
+                        paste0(o$.g, " across ", o$.s)),
+      Change = ifelse(flip, -o$Change, o$Change),
+      lower.CL = ifelse(flip, -o$upper.CL, lo), upper.CL = ifelse(flip, -lo, o$upper.CL),
+      "F (df)" = ifelse(is.na(o$F), "", sprintf("%.2f (%g, %.1f)", o$F, o$df1, o$df2)),
+      p = o$p, Note = o$Note, check.names = FALSE))
+  }, digits = 4, na = "")
 
   # Model warnings (e.g. convergence), per parameter
   output$warn_note <- renderUI({
@@ -1679,8 +1710,7 @@ server <- function(input, output, session) {
                           incProgress(1 / (n * length(sps)), detail = paste(lab, label)),
                           r$design, r$line_tx),
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
-        inter <- if (isTRUE(r$advanced)) tryCatch(split_interaction(sp$datos, x$var, lab, r$design),
-                                                error = function(e) NULL)
+        inter <- tryCatch(split_interaction(sp$datos, x$var, lab, r$design), error = function(e) NULL)
         list(prep = sp, res = res, inter = inter, skipped = attr(res, "skipped"))
       }, sps, labels, r$res), labels))
   })

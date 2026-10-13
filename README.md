@@ -6,8 +6,8 @@ Includes pairwise comparisons and downloadable plots. No installation needed.
 Data is local to your platform (PC/Mac/Linux).
 
 The regular version uses the nested model. The **Advanced designs** switch
-(sidebar) adds crossed batches, matched lines, line-specific treatment effects,
-a Group × Subset test and more comparisons
+(sidebar) adds crossed batches, matched lines, line-specific treatment effects
+and more comparisons
 ([Advanced designs](#advanced-designs)).
 
 **App:** https://enzyme5610.github.io/Mixed_Model_Correction/
@@ -117,8 +117,20 @@ one shared Y axis, with the groups next to each other for each parameter.
 **Split and combined** (Plots and Pairwise tabs): groups named like `Ctrl_M,
 Ctrl_F, KO_M, KO_F` are split at the last `_`. Ctrl vs KO is fit within each
 subset (M, F) and on all cells (Combined), each its own model. Every group
-needs every subset. Does not test whether subsets differ. The pooled groups
-(Ctrl, KO) get their own colors and names.
+needs every subset. The pooled groups (Ctrl, KO) get their own colors and
+names.
+
+Significant in M but not in F doesn't mean M and F differ. The **Group ×
+Subset interaction** (Pairwise tab, Split and combined view) tests whether the
+group difference changes between subsets. With names like `Ctrl_veh,
+Ctrl_drug, KO_veh, KO_drug` this is genotype × treatment. Needs 2+ lines per
+subset. Model: `parameter ~ Group * Subset + <random effects>`, plus
+`(1 | Line:Group)` or `(1 | Line:Subset)` when that factor varies within
+lines (each line's own response), with a Kenward-Roger F test of Group × Subset.
+With 2 groups and 2 subsets the table also gives the change: the group
+difference in the later subset minus the earlier one (e.g. `(KO - Ctrl in drug)
+- (KO - Ctrl in veh)`), with a 95% CI. Groups read later minus earlier in plot
+order, as in the other tables.
 
 In both figures the parameters or subsets on the x axis can be reordered and
 renamed the same way (e.g. Combined to All).
@@ -158,12 +170,6 @@ corrected clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Tx)`.
 Background is removed and each line can respond differently. Matched lines and
 line-specific effects work with nested and crossed.
 
-**Group × Subset interaction** (Pairwise tab, Split and combined view): does
-the group difference change between subsets? With names like `Ctrl_veh,
-Ctrl_drug, KO_veh, KO_drug` this is genotype × treatment. Needs 2+ lines per
-subset. Model: `parameter ~ Group * Subset + <random effects> + (1 | Line:Group)`,
-with a Kenward-Roger F test of Group × Subset.
-
 **Comparisons:** all pairs (Bonferroni or Tukey), each group vs the reference
 (Dunnett, emmeans' `dunnettx` approximation), or selected comparisons (Holm;
 their confidence intervals use Bonferroni). Same model, no refit; tables and
@@ -182,7 +188,8 @@ What runs for each parameter, with links to each package's documentation:
 | All pairs | `pairs(emm, adjust = "bonferroni")` or `"tukey"` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Each vs reference (Advanced) | `contrast(emm, "trt.vs.ctrl", adjust = "dunnettx")` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Selected comparisons (Advanced) | `contrast(emm, <chosen pairs>, adjust = "holm")` | [emmeans: confidence intervals](https://rvlenth.github.io/emmeans/articles/confidence-intervals.html) |
-| Group × Subset (Advanced) | `anova(lmer(parameter ~ Group * Subset + <random effects> + (1 \| Line:Group)), type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
+| Group × Subset | `anova(lmer(parameter ~ Group * Subset + <random effects> + (1 \| Line:Group) or (1 \| Line:Subset)), type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
+| Group × Subset change | `contrast(emmeans(fit, ~ Group * Subset), interaction = "revpairwise")` | [emmeans: interactions](https://rvlenth.github.io/emmeans/articles/interactions.html) |
 | FDR q-values | `p.adjust(p, "BH")` across parameters | [stats](https://stat.ethz.ch/R-manual/R-devel/library/stats/html/p.adjust.html) |
 | Possible outliers | `residuals(fit, type = "pearson", scaled = TRUE)` beyond ±3 | [lme4](https://CRAN.R-project.org/package=lme4) |
 | Batch-adjusted values | `lme4::ranef(fit)` (BLUPs) | [lme4](https://CRAN.R-project.org/package=lme4) |
