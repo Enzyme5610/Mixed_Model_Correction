@@ -1053,6 +1053,7 @@ ui <- page_sidebar(
     hr(),
     input_switch("advanced", "Advanced designs"),
     conditionalPanel("input.advanced",
+      uiOutput("need_peek"),
       radioButtons("design", "Batch design",
         choices = c("Nested (most ephys, some qPCR)" = "nested", "Crossed (some ephys, most qPCR)" = "crossed"))),
     uiOutput("design_note"),
@@ -1284,13 +1285,25 @@ server <- function(input, output, session) {
   })
 
   # Default-mode helper: the Advanced options the answers point to
+  need_answers <- function()
+    vapply(names(adv_qs), function(k) { x <- input[[paste0("need_", k)]]; if (is.null(x)) "" else x }, "")
   output$need_result <- renderUI({
-    a <- vapply(names(adv_qs), function(k) { x <- input[[paste0("need_", k)]]; if (is.null(x)) "" else x }, "")
+    a <- need_answers()
     if (any(a == "yes")) div(class = "alert alert-info small py-1 px-2 mb-0",
       "Turn on Advanced designs in the sidebar, then use:",
       tags$ul(class = "mb-0", lapply(adv_qs[a == "yes"], function(q) tags$li(strong(q[2], .noWS = "after"), ": ", q[3]))))
     else if (all(a == "no")) div(class = "alert alert-success small py-1 px-2 mb-0",
       "The default mode fits your experiment.")
+  })
+  # Advanced sidebar: the same picks, to peek at while setting up
+  output$need_peek <- renderUI({
+    a <- need_answers()
+    if (!any(a == "yes") && !all(a == "no")) return(NULL)
+    tags$details(class = "small mb-2",
+      tags$summary("Recommended setup"),
+      if (any(a == "yes")) tags$ul(class = "mb-0 ps-3", lapply(adv_qs[a == "yes"], function(q) tags$li(q[2])))
+      else div("The default setup fits."),
+      div(class = "text-muted", "From your answers on the Welcome page."))
   })
 
   # Split and combined: skipped subsets, and picks within one pooled group (no counterpart)
