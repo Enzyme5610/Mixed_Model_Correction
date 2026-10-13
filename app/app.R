@@ -842,9 +842,17 @@ welcome_page <- function() {
          "The unit that got one treatment, usually the coverslip or well"),
       fb("One plate or recording day held several lines", "The shared plate or day (crossed design)"),
       fb("No batch recorded", tagList("B1 on every row (model: ", tags$code("y ~ Tx + (1|Line)", .noWS = "after"), ")"))),
-    conditionalPanel("!input.advanced",
-      div(style = "max-width: 420px;",
+    # Batch column examples for the first two rows above
+    div(class = "mmc-designs",
+      conditionalPanel("!input.advanced", div(
+        tags$small(strong("Each line in one group")),
         nested_sheet("Color = one batch. L2's B1 is not L1's B1. L3 and L4 have one batch each."))),
+      div(tags$small(strong("Same line in several groups")),
+        batch_sheet(list(
+          c("Vehicle", "L1", "B1", "g"), c("Vehicle", "L1", "B2", "p"),
+          c("Drug", "L1", "B3", "o"), c("Drug", "L1", "B4", "b"),
+          c("Vehicle", "L2", "B1", "y"), c("Drug", "L2", "B2", "k")),
+          "Color = one coverslip; each got one treatment. L2's B1 is not L1's B1.", "(1|Line/Batch)"))),
     conditionalPanel("input.advanced",
       h5(class = "mt-4", "Which options apply (Advanced)"),
       tags$table(class = "table table-sm small mb-1",
