@@ -17,7 +17,7 @@ a Group × Subset test and more comparisons
 1. Upload a CSV (format below).
 2. Check the parameter list. Numeric columns are preselected; unselect any
    that aren't parameters (e.g. age, culture days, well number).
-3. Choose the pairwise adjustment (Tukey or Bonferroni).
+3. Choose the pairwise adjustment (Bonferroni or Tukey).
 4. Click **Run models**, then download results, pairwise tables and plots.
 
 The first load takes about 30 seconds while R loads in the browser.
@@ -60,7 +60,8 @@ except in the crossed design, where B1 is one plate or day shared by lines.
 `lmerTest::lmer` (REML), with Tx tested by a Type II F test using the
 Kenward-Roger method (small-sample corrected standard errors and degrees of
 freedom). With one Line the model uses `(1 | Batch)`; with one Batch, or no
-line with repeat batches, `(1 | Line)`. Pairwise comparisons use `emmeans`;
+line with repeat batches, `(1 | Line)`; with one of each, the parameter is
+skipped. Lines and batches are counted per parameter, where it was measured. Pairwise comparisons use `emmeans`;
 their confidence intervals use the same adjustment. Exact calls:
 [Methods](#methods).
 
@@ -103,7 +104,8 @@ reference; reordering the groups flips a comparison. P-values don't change.
 Significance can be shown as p-values or stars (ns, *, **, ***, ****).
 
 Groups appear in CSV order (reference first) and can be reordered by
-dragging; each group's color can be picked. Dots can be colored by Line,
+dragging; each group's color can be picked and its name changed (plots only;
+tables keep the original names). Dots can be colored by Line,
 Batch or Group and shaped by Line or Batch, with the color and shape of
 each level selectable.
 
@@ -115,7 +117,11 @@ one shared Y axis, with the groups next to each other for each parameter.
 **Split and combined** (Plots and Pairwise tabs): groups named like `Ctrl_M,
 Ctrl_F, KO_M, KO_F` are split at the last `_`. Ctrl vs KO is fit within each
 subset (M, F) and on all cells (Combined), each its own model. Every group
-needs every subset. Does not test whether subsets differ.
+needs every subset. Does not test whether subsets differ. The pooled groups
+(Ctrl, KO) get their own colors and names.
+
+In both figures the parameters or subsets on the x axis can be reordered and
+renamed the same way (e.g. Combined to All).
 
 ## Advanced designs
 
@@ -158,7 +164,7 @@ Ctrl_drug, KO_veh, KO_drug` this is genotype × treatment. Needs 2+ lines per
 subset. Model: `parameter ~ Group * Subset + <random effects> + (1 | Line:Group)`,
 with a Kenward-Roger F test of Group × Subset.
 
-**Comparisons:** all pairs (Tukey or Bonferroni), each group vs the reference
+**Comparisons:** all pairs (Bonferroni or Tukey), each group vs the reference
 (Dunnett, emmeans' `dunnettx` approximation), or selected comparisons (Holm;
 their confidence intervals use Bonferroni). Same model, no refit; tables and
 plot brackets show only the tested pairs. With each vs reference, the
@@ -173,7 +179,7 @@ What runs for each parameter, with links to each package's documentation:
 | Fit | `lmerTest::lmer(parameter ~ Tx + <random effects>, REML = TRUE)` | [lme4](https://CRAN.R-project.org/package=lme4), [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
 | Tx test | `anova(fit, type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest), [pbkrtest](https://CRAN.R-project.org/package=pbkrtest) |
 | Model means, SE, 95% CI | `emmeans(fit, "Tx", lmer.df = "kenward-roger")` | [emmeans: models](https://rvlenth.github.io/emmeans/articles/sophisticated.html) |
-| All pairs | `pairs(emm, adjust = "tukey")` or `"bonferroni"` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
+| All pairs | `pairs(emm, adjust = "bonferroni")` or `"tukey"` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Each vs reference (Advanced) | `contrast(emm, "trt.vs.ctrl", adjust = "dunnettx")` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Selected comparisons (Advanced) | `contrast(emm, <chosen pairs>, adjust = "holm")` | [emmeans: confidence intervals](https://rvlenth.github.io/emmeans/articles/confidence-intervals.html) |
 | Group × Subset (Advanced) | `anova(lmer(parameter ~ Group * Subset + <random effects> + (1 \| Line:Group)), type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest) |

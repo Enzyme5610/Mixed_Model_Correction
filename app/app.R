@@ -81,13 +81,18 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
+  skipped <- character()
   for (i in seq_len(n)) {
     var <- vars[i]
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
-    # Lines/Batches counted where this parameter was measured
+    # Lines/Batches counted where this parameter was measured; one of each: skipped, as in the script
     rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, line_tx),
-                     error = function(e) stop("'", label, "': ", conditionMessage(e), call. = FALSE))
+                     error = function(e) NULL)
+    if (is.null(rand)) {
+      skipped <- c(skipped, label)
+      next
+    }
     f <- reformulate(c("Tx", rand), var)
     warn <- character()
     res <- withCallingHandlers(
@@ -131,6 +136,8 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
     res$out <- res$out[abs(res$out$resid) > 3, ]
     out[[i]] <- res
   }
+  out <- out[!vapply(out, is.null, TRUE)]
+  attr(out, "skipped") <- skipped
   out
 }
 
@@ -140,7 +147,7 @@ adjust_label <- function(adjust, k) {
 }
 
 # Comparisons from the model's means: all pairs, each vs reference (Dunnett) or selected comparisons
-comparisons <- function(res, mode = "all", adjust = "tukey", ref = NULL, sel = NULL) {
+comparisons <- function(res, mode = "all", adjust = "bonferroni", ref = NULL, sel = NULL) {
   lev <- as.character(res$means$Tx)
   prs <- combn(lev, 2)  # emmeans pair order
   keep <- paste(prs[1, ], prs[2, ], sep = "|") %in% sel
@@ -222,8 +229,14 @@ dot_style <- function(datos, opt, by, what = "col") {
     as.character(if (is.null(p)) def[i] else p)
   }, "")
   if (what == "pch") val <- as.integer(val)
-  list(lev = lev, val = val, idx = match(as.character(f), lev),
-       title = c(line = "Line", batch = "Batch", group = "Group")[[by]])
+  list(lev = lev, lab = if (by == "group") group_label(lev, opt) else lev, val = val,
+       idx = match(as.character(f), lev), title = c(line = "Line", batch = "Batch", group = "Group")[[by]])
+}
+
+# Group names as shown in plots (renamed in Plots, 2.)
+group_label <- function(x, opt) {
+  v <- vapply(x, function(g) trimws(paste(opt$group_names[[g]], collapse = "")), "")
+  ifelse(nzchar(v), v, x)
 }
 
 # Opaque tint toward white (EMF has no transparency)
@@ -236,7 +249,7 @@ dot_legend <- function(x, y, cs, ss) {
     if (!is.null(cs)) list(s = cs, col = cs$val, pch = if (same) ss$val else 19),
     if (!is.null(ss) && !same) list(s = ss, col = "grey30", pch = ss$val))
   for (k in Filter(Negate(is.null), keys)) {
-    g <- legend(x, y, legend = k$s$lev, title = k$s$title, title.adj = 0, col = k$col,
+    g <- legend(x, y, legend = k$s$lab, title = k$s$title, title.adj = 0, col = k$col,
                 pch = k$pch, bty = "n", xpd = TRUE, cex = 0.85)
     y <- g$rect$top - g$rect$h
   }
@@ -244,7 +257,7 @@ dot_legend <- function(x, y, cs, ss) {
 }
 
 plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "line",
-                      shape_by = "none", cols = list(), shapes = list(), order = NULL,
+                      shape_by = "none", cols = list(), shapes = list(), order = NULL, group_names = list(),
                       labels = "stars",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
                       err = "sem", center = "diamond",
@@ -432,7 +445,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   n_pairs <- if (opt$brackets) nrow(pw) else 0
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
-  op <- plot_frame(ord, k, c(rng[1] - 0.05 * h, top), ylab, res$label, model_note(opt, st$adjusted),
+  op <- plot_frame(group_label(ord, opt), k, c(rng[1] - 0.05 * h, top), ylab, res$label, model_note(opt, st$adjusted),
                    adjust, opt, scale)
   on.exit(par(op))
 
@@ -521,7 +534,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
 
   op <- plot_frame(labels, k, c(rng[1] - 0.05 * h, top),
                    scale_label(sts[[1]], if (is.null(main)) "Value" else main, opt),
-                   if (is.null(main)) paste(ord, collapse = " vs ") else main,
+                   if (is.null(main)) paste(group_label(ord, opt), collapse = " vs ") else main,
                    model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), adjust, opt, sts[[1]]$scale)
   on.exit(par(op))
 
@@ -574,7 +587,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
 
   usr <- par("usr")
   lx <- usr[2] + 0.02 * diff(usr[1:2])
-  g <- legend(lx, usr[4], legend = ord, title = "Group", title.adj = 0, pch = 22, pt.cex = 1.6,
+  g <- legend(lx, usr[4], legend = group_label(ord, opt), title = "Group", title.adj = 0, pch = 22, pt.cex = 1.6,
               pt.bg = tint(cols, 0.5), col = cols, bty = "n", xpd = TRUE, cex = 0.85)
   ky <- g$rect$top - g$rect$h
   if (show_dots) ky <- dot_legend(lx, ky, cs, ss)
@@ -818,7 +831,12 @@ welcome_page <- function() {
     div(class = "mmc-steps",
       step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
       step("2", "Parameters", "Numeric columns preselected"), arrow,
-      step("3", "Adjustment", "Tukey or Bonferroni; pick your control"), arrow,
+      # Advanced: design step, then comparisons, as in the sidebar
+      conditionalPanel("input.advanced",
+        step(NULL, "Advanced designs", "Nested or crossed; matched lines; line-specific effects"), arrow),
+      conditionalPanel("!input.advanced", step("3", "Adjustment", "Bonferroni or Tukey; pick your control")),
+      conditionalPanel("input.advanced",
+        step("3", "Comparisons", "All pairs, vs reference or selected; pick your control")), arrow,
       step("4", "Run models", "Results and plots open in the tabs")),
     h5(class = "mt-4", "Batches"),
     p("One file should be related to one experiment. The Batch column groups cells that share more than",
@@ -872,7 +890,7 @@ welcome_page <- function() {
       fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Tx + (1|Line/Batch)")),
       fb("≥ 2", "1 per line", tags$code("y ~ Tx + (1|Line)")),
       fb("1", "≥ 2", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
-      fb("1", "1", "Can't be tested")),
+      fb("1", "1", "Skipped")),
     p(class = "small text-muted", "y = one parameter.", tags$span(`data-display-if` = "input.advanced",
       `data-ns-prefix` = "", "Crossed with no shared batch runs as Nested.")),
     conditionalPanel("input.advanced",
@@ -889,7 +907,7 @@ welcome_page <- function() {
              "vehicle and drug): background removed, and each line can respond differently."),
              both_pic(), "(1|Pair) + (1|Line:Tx)")),
       h5(class = "mt-4", "Comparisons"),
-      p(class = "small", "All pairs (Tukey or Bonferroni), each group vs the reference (Dunnett), or",
+      p(class = "small", "All pairs (Bonferroni or Tukey), each group vs the reference (Dunnett), or",
         "selected comparisons (Holm). Tables and plot brackets show only the tested pairs. With each vs",
         "reference, the reference group decides which comparisons are tested.")),
     h5(class = "mt-4", "Split and combined"),
@@ -963,7 +981,7 @@ ui <- page_sidebar(
         setTimeout(() => URL.revokeObjectURL(url), 5000);
       });
       // Color and shape pickers, kept per session
-      const picks = {cols: {}, shapes: {}, pairs: {}};
+      const picks = {cols: {}, shapes: {}, pairs: {}, xlabs: {}, glabs: {}};
       document.addEventListener('change', e => {
         const el = e.target.closest('.mmc-pick'); if (!el) return;
         picks[el.dataset.input][el.dataset.key] = el.value;
@@ -980,9 +998,9 @@ ui <- page_sidebar(
         e.preventDefault();
         Shiny.setInputValue('dl_plot', a.dataset.fmt, {priority: 'event'});
       });
-      // Group order: drag (mouse or touch), or arrow buttons
+      // Group and x-axis order: drag (mouse or touch), or arrow buttons
       let drag = null;
-      const sendOrder = ul => Shiny.setInputValue('tx_order',
+      const sendOrder = ul => Shiny.setInputValue(ul.dataset.input,
         [...ul.children].map(li => li.dataset.lev), {priority: 'event'});
       document.addEventListener('pointerdown', e => {
         const li = e.target.closest('.mmc-order li');
@@ -1044,7 +1062,7 @@ ui <- page_sidebar(
     conditionalPanel("!input.advanced || input.cmp == 'all'",
       radioButtons("adjust", tagList(tags$span(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "3."),
                                      "Pairwise p-value adjustment"),
-                   choices = c("Tukey" = "tukey", "Bonferroni" = "bonferroni"))),
+                   choices = c("Bonferroni" = "bonferroni", "Tukey" = "tukey"))),
     conditionalPanel("input.advanced && input.cmp == 'sel'",
       selectizeInput("sel_pairs", "Comparisons to test", choices = NULL, multiple = TRUE,
                      options = list(plugins = list("remove_button"), placeholder = "All pairs"))),
@@ -1108,6 +1126,9 @@ ui <- page_sidebar(
           conditionalPanel("input.fig == 'all'",
             selectizeInput("multi", "Parameters", choices = NULL, multiple = TRUE,
                            options = list(plugins = list("remove_button")))),
+          conditionalPanel("input.fig != 'one'",
+            helpText("X axis: drag to reorder, type to rename."),
+            uiOutput("x_ui")),
           radioButtons("type", "Plot type", inline = TRUE, selected = "bar",
                        choices = c("Dots" = "dots", "Bar" = "bar", "Box" = "box",
                                    "Violin" = "violin")),
@@ -1119,9 +1140,9 @@ ui <- page_sidebar(
           checkboxInput("outliers", "Circle possible outliers", TRUE),
           checkboxInput("adj_batch", "Batch-adjusted values", FALSE),
           conditionalPanel("input.adj_batch", uiOutput("adj_note"))),
-        accordion_panel("2. Group order & colors",
+        accordion_panel("2. Group order, colors & names",
           helpText("Drag a group (or use the arrows) to reorder. Click a swatch to",
-                   "change its color."),
+                   "change its color; type to rename (plots only)."),
           uiOutput("group_ui")),
         accordion_panel("3. Dot colors & shapes",
           selectInput("color_by", "Color dots by", choices = c(
@@ -1182,7 +1203,7 @@ variance estimated as zero), appear under ANOVA results.
 parameters (e.g. gene panels). Adjusts the Tx p-values (not pairwise) across
 all parameters in a run.
 
-**Pairwise.** `emmeans` from the same model, Tukey or Bonferroni adjusted
+**Pairwise.** `emmeans` from the same model, Bonferroni or Tukey adjusted
 (p-values and CIs).
 Comparisons read later minus earlier group in plot order (reference first);
 p-values don't change.
@@ -1256,18 +1277,25 @@ server <- function(input, output, session) {
       choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"), pick_label(prs[1, ], prs[2, ])))
   })
 
-  # Split and combined compares pooled groups: a pick within one pooled group has no counterpart
-  split_note <- function() {
-    if (cmp_mode() != "sel" || !length(input$sel_pairs)) return(NULL)
-    ab <- do.call(rbind, strsplit(input$sel_pairs, "|", fixed = TRUE))
-    same <- pool_name(ab[, 1]) == pool_name(ab[, 2])
-    if (any(same)) div(class = "alert alert-warning small py-1 px-2",
-      "Not used in Split and combined (both groups pool to one): ",
-      paste0(paste(pick_label(ab[same, 1], ab[same, 2]), collapse = "; "), "."),
-      if (all(same)) " No selected comparison applies here, so all pooled comparisons are shown.")
+  # Split and combined: skipped subsets, and picks within one pooled group (no counterpart)
+  split_note <- function(params) {
+    s <- split_all()[params]
+    sk <- unlist(Map(function(p, x) if (length(x$skipped)) paste(p, x$skipped), names(s), s))
+    same <- NULL
+    if (cmp_mode() == "sel" && length(input$sel_pairs)) {
+      ab <- do.call(rbind, strsplit(input$sel_pairs, "|", fixed = TRUE))
+      same <- pool_name(ab[, 1]) == pool_name(ab[, 2])
+    }
+    tagList(
+      if (length(sk)) div(class = "alert alert-warning small py-1 px-2",
+        paste0("Subsets skipped, one line and one batch only: ", paste(sk, collapse = "; "), ".")),
+      if (any(same)) div(class = "alert alert-warning small py-1 px-2",
+        "Not used in Split and combined (both groups pool to one): ",
+        paste0(paste(pick_label(ab[same, 1], ab[same, 2]), collapse = "; "), "."),
+        if (all(same)) " No selected comparison applies here, so all pooled comparisons are shown."))
   }
-  output$split_note_pairs <- renderUI(split_note())
-  output$split_note_plot <- renderUI(split_note())
+  output$split_note_pairs <- renderUI(split_note(names(split_all())))
+  output$split_note_plot <- renderUI(split_note(input$plot_param))
 
   # qPCR: one click to fold change 2^-ddCt in tables and plots
   fc_on <- function() identical(input$scale, "fc")
@@ -1361,8 +1389,7 @@ server <- function(input, output, session) {
     cv <- coverage(prep(), input$params)
     bad <- cv$Parameter[!cv$Testable]
     if (length(bad)) div(class = "alert alert-warning small py-1 px-2",
-      paste0("One line and one batch only, can't be tested: ", paste(bad, collapse = ", "),
-             ". Unselect them."))
+      paste0("One line and one batch only, will be skipped: ", paste(bad, collapse = ", "), "."))
   })
 
   output$design_tbl <- renderTable(design_table(prep()$datos))
@@ -1380,7 +1407,9 @@ server <- function(input, output, session) {
       tryCatch(run_models(p, input$params, function(n, label) incProgress(1 / n, detail = label),
                           design = design(), line_tx = line_tx()),
                error = function(e) validate(conditionMessage(e))))
-    list(res = res, prep = p, design = design(), advanced = isTRUE(input$advanced), line_tx = line_tx(),
+    validate(need(length(res) > 0, "No selected parameter can be tested (one line and one batch only)."))
+    list(res = res, skipped = attr(res, "skipped"), prep = p, design = design(),
+         advanced = isTRUE(input$advanced), line_tx = line_tx(),
          base = tools::file_path_sans_ext(input$file$name))
   })
 
@@ -1395,25 +1424,68 @@ server <- function(input, output, session) {
   # Group order: reset to reference first on new data or reference
   tx_ord <- reactiveVal(NULL)
   observeEvent(list(prep(), input$ref), tx_ord(NULL))
-  observeEvent(input$tx_order, tx_ord(unlist(input$tx_order)))
+  observeEvent(input$tx_order, {
+    new <- unlist(input$tx_order)
+    full <- tx_order(prep()$datos, list(order = tx_ord(), ref = input$ref))
+    # Split list: a pooled group moves with its members
+    if (!all(new %in% full)) new <- full[order(match(pool_name(full), new))]
+    tx_ord(new)
+  })
 
   picker <- function(key, val, type = "cols") {
     tags$input(type = "color", class = "mmc-pick", `data-input` = type,
                `data-key` = key, value = val, title = "Pick a color")
   }
 
+  # Draggable list item with up/down arrows
+  order_item <- function(lev, ...) {
+    arrow <- function(dir) tags$button(type = "button", class = "btn btn-sm btn-link p-0 mmc-move",
+      `data-dir` = dir, `aria-label` = paste("Move", lev, dir), if (dir == "up") "▲" else "▼")
+    tags$li(class = "list-group-item d-flex align-items-center gap-2 py-1", `data-lev` = lev,
+            span("⠿", class = "text-muted"), ..., arrow("up"), arrow("down"))
+  }
+  # Text box for a plot label; empty keeps the original name
+  name_box <- function(id, key, name) {
+    cur <- isolate(input[[id]])[[key]]
+    tags$input(type = "text", class = "mmc-pick form-control form-control-sm", `data-input` = id,
+               `data-key` = key, `aria-label` = paste("Label for", name), value = if (is.null(cur)) name else cur)
+  }
+
+  # Groups as in the current figure: pooled (Ctrl, KO) in Split and combined
   output$group_ui <- renderUI({
     d <- prep()$datos
     o <- list(order = tx_ord(), ref = input$ref, cols = isolate(input$cols))
+    ord <- tx_order(d, o)
+    if (identical(input$fig, "split") && all(grepl("_", ord))) {
+      d$Tx <- factor(pool_name(as.character(d$Tx)), levels = unique(pool_name(levels(d$Tx))))
+      o$ref <- pool_name(o$ref)
+      ord <- unique(pool_name(ord))
+    }
     gs <- dot_style(d, o, "group")
-    arrow <- function(dir, g) tags$button(type = "button", class = "btn btn-sm btn-link p-0 mmc-move",
-      `data-dir` = dir, `aria-label` = paste("Move", g, dir), if (dir == "up") "▲" else "▼")
-    tags$ul(class = "list-group mmc-order", lapply(tx_order(d, o), function(g) tags$li(
-      class = "list-group-item d-flex align-items-center gap-2 py-1",
-      `data-lev` = g,
-      span("⠿", class = "text-muted"), picker(paste0("group:", g), gs$val[gs$lev == g]),
-      span(g, class = "flex-grow-1"), arrow("up", g), arrow("down", g))))
+    tags$ul(class = "list-group mmc-order", `data-input` = "tx_order", lapply(ord, function(g)
+      order_item(g, picker(paste0("group:", g), gs$val[gs$lev == g]), name_box("glabs", g, g))))
   })
+
+  # X axis of All parameters (p) and Split and combined (s): order and labels, plots only
+  x_ord <- reactiveValues(p = NULL, s = NULL)
+  x_kind <- function() if (identical(input$fig, "split")) "s" else "p"
+  observeEvent(input$x_order, x_ord[[x_kind()]] <- unlist(input$x_order))
+  output$x_ui <- renderUI({
+    kind <- x_kind()
+    lev <- levels(results()$prep$datos$Tx)
+    if (kind == "s" && !all(grepl("_", lev))) return(NULL)
+    keys <- if (kind == "s") c(unique(sub("^.*_", "", lev)), "Combined") else intersect(param_labels(), input$multi)
+    tags$ul(class = "list-group mmc-order", `data-input` = "x_order",
+      lapply(keys[order(match(keys, x_ord[[kind]]))], function(k) order_item(k, name_box("xlabs", paste0(kind, ":", k), k))))
+  })
+  x_arrange <- function(res, kind) {
+    res <- res[order(match(vapply(res, `[[`, "", "label"), x_ord[[kind]]))]
+    lapply(res, function(r) {
+      l <- trimws(paste(input$xlabs[[paste0(kind, ":", r$label)]], collapse = ""))
+      if (nzchar(l)) r$label <- l
+      r
+    })
+  }
 
   # Color and/or shape pickers for each Line or Batch level
   output$dot_style_ui <- renderUI({
@@ -1568,7 +1640,8 @@ server <- function(input, output, session) {
 
   # Model warnings (e.g. convergence), per parameter
   output$warn_note <- renderUI({
-    w <- unlist(lapply(results()$res, function(x) if (length(x$warnings)) paste0(x$label, ": ", x$warnings)))
+    w <- c(unlist(lapply(results()$res, function(x) if (length(x$warnings)) paste0(x$label, ": ", x$warnings))),
+           if (length(results()$skipped)) paste0(results()$skipped, ": skipped, one line and one batch only"))
     if (length(w)) div(class = "alert alert-warning small py-1 px-2", "Model warnings:",
                        tags$ul(class = "mb-0", lapply(w, tags$li)))
   })
@@ -1581,7 +1654,7 @@ server <- function(input, output, session) {
 
   opt <- reactive(list(type = input$type, layout = input$layout, dots = input$dots,
                        color_by = input$color_by, shape_by = input$shape_by,
-                       cols = input$cols, shapes = input$shapes, order = tx_ord(),
+                       cols = input$cols, shapes = input$shapes, order = tx_ord(), group_names = input$glabs,
                        labels = input$sig, size = input$pt_size,
                        brackets = !identical(input$sig, "none"), scale = input$scale, ref = input$ref,
                        ylab = input$ylab, err = input$err,
@@ -1608,7 +1681,7 @@ server <- function(input, output, session) {
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
         inter <- if (isTRUE(r$advanced)) tryCatch(split_interaction(sp$datos, x$var, lab, r$design),
                                                 error = function(e) NULL)
-        list(prep = sp, res = res, inter = inter)
+        list(prep = sp, res = res, inter = inter, skipped = attr(res, "skipped"))
       }, sps, labels, r$res), labels))
   })
 
@@ -1619,13 +1692,13 @@ server <- function(input, output, session) {
       x <- cmp_res()
       sel <- x[param_labels() %in% input$multi]
       validate(need(length(sel) > 0, "Select at least one parameter."))
-      draw_multi(r$prep$datos, sel, adj, opt())
+      draw_multi(r$prep$datos, x_arrange(sel, "p"), adj, opt())
     } else if (identical(input$fig, "split")) {
       s <- cmp_split()[[input$plot_param]]
       o <- opt()
       o$ref <- pool_name(o$ref)
       o$order <- unique(pool_name(unlist(o$order)))
-      draw_multi(s$prep$datos, s$res, adj, o, main = input$plot_param)
+      draw_multi(s$prep$datos, x_arrange(s$res, "s"), adj, o, main = input$plot_param)
     } else draw_plot(r$prep$datos, current(), adj, opt())
   }
 
