@@ -143,24 +143,19 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
 
 adjust_label <- function(adjust, k) {
   if (k <= 2) return("none (one comparison)")
-  c(tukey = "Tukey", bonferroni = "Bonferroni", dunnett = "Dunnett", holm = "Holm")[[adjust]]
+  c(tukey = "Tukey", bonferroni = "Bonferroni", dunnett = "Dunnett")[[adjust]]
 }
 
-# Comparisons from the model's means: all pairs, each vs reference (Dunnett) or selected comparisons
-comparisons <- function(res, mode = "all", adjust = "bonferroni", ref = NULL, sel = NULL) {
+# Comparisons from the model's means: all pairs or each vs reference (Dunnett)
+comparisons <- function(res, mode = "all", adjust = "bonferroni", ref = NULL) {
   lev <- as.character(res$means$Tx)
-  prs <- combn(lev, 2)  # emmeans pair order
-  keep <- paste(prs[1, ], prs[2, ], sep = "|") %in% sel
   if (mode == "ref") {
     k <- if (isTRUE(ref %in% lev)) match(ref, lev) else 1
     ct <- emmeans::contrast(res$em, "trt.vs.ctrl", ref = k, adjust = "dunnettx")
     a <- lev[-k]; b <- rep(lev[k], length(a))
-  } else if (mode == "sel" && any(keep)) {
-    a <- prs[1, keep]; b <- prs[2, keep]
-    m <- setNames(lapply(seq_along(a), function(i) (lev == a[i]) - (lev == b[i])), paste(a, "-", b))
-    ct <- emmeans::contrast(res$em, m, adjust = adjust)
   } else {
-    ct <- pairs(res$em, adjust = adjust)  # all pairs (also when none are selected)
+    prs <- combn(lev, 2)  # emmeans pair order
+    ct <- pairs(res$em, adjust = adjust)
     a <- prs[1, ]; b <- prs[2, ]
   }
   pw <- as.data.frame(summary(ct, infer = TRUE))
@@ -795,8 +790,9 @@ adv_qs <- list(
            "Matched lines", "Removes donor differences, so real effects are easier to detect"),
   line_tx = c("Did the same line get more than one treatment (e.g. vehicle and drug)?",
               "Allow line-specific treatment effects", "Lines can respond differently, so one line can't drive the result"),
-  cmp = c("Do you need only some comparisons (e.g. each group vs control)?",
-          "Comparisons: Each vs reference or Selected comparisons", "Fewer tests, so more power"))
+  cmp = c("Do you only need each group compared with the control (e.g. several mutants vs one control)?",
+          "Comparisons: Each vs reference",
+          "Tests each group against the control only; differences between the other groups aren't tested"))
 
 # Welcome tab: steps, batches, designs and fallbacks
 welcome_page <- function() {
@@ -834,7 +830,7 @@ welcome_page <- function() {
         step(NULL, "Advanced designs", "Nested or crossed; matched lines; line-specific effects"), arrow),
       conditionalPanel("!input.advanced", step("3", "Adjustment", "Bonferroni or Tukey; pick your control")),
       conditionalPanel("input.advanced",
-        step("3", "Comparisons", "All pairs, vs reference or selected; pick your control")), arrow,
+        step("3", "Comparisons", "All pairs or each vs reference; pick your control")), arrow,
       step("4", "Run models", "Results and plots open in the tabs")),
     h5(class = "mt-4", "Batches"),
     p("One file should be related to one experiment. The Batch column groups cells that share more than",
@@ -915,9 +911,9 @@ welcome_page <- function() {
              "vehicle and drug): background removed, and each line can respond differently."),
              both_pic(), "(1|Pair) + (1|Line:Tx)")),
       h5(class = "mt-4", "Comparisons"),
-      p(class = "small", "All pairs (Bonferroni or Tukey), each group vs the reference (Dunnett), or",
-        "selected comparisons (Holm). Tables and plot brackets show only the tested pairs. With each vs",
-        "reference, the reference group decides which comparisons are tested.")),
+      p(class = "small", "All pairs (Bonferroni or Tukey) or each group vs the reference (Dunnett).",
+        "Tables and plot brackets show only the tested pairs. With each vs reference, the reference",
+        "group decides which comparisons are tested.")),
     h5(class = "mt-4", "Split and combined"),
     p(class = "small", "Groups named like Ctrl_M, Ctrl_F, KO_M, KO_F are split at the last _.",
       "Ctrl vs KO is fit within M, within F, and on all cells (Combined), each its own model."),
@@ -1063,7 +1059,7 @@ ui <- page_sidebar(
     hr(),
     conditionalPanel("input.advanced",
       radioButtons("cmp", "3. Comparisons", choices = c(
-        "All pairs" = "all", "Each vs reference (Dunnett)" = "ref", "Selected comparisons (Holm)" = "sel"))),
+        "All pairs" = "all", "Each vs reference (Dunnett)" = "ref"))),
     conditionalPanel("!input.advanced || input.cmp == 'all'",
       radioButtons("adjust", tagList(tags$span(`data-display-if` = "!input.advanced", `data-ns-prefix` = "", "3."),
                                      "Pairwise p-value adjustment"),
@@ -1073,10 +1069,6 @@ ui <- page_sidebar(
       helpText("Sets comparison direction in tables and plots; p-values don't change.")),
     conditionalPanel("input.advanced && input.cmp == 'ref'",
       helpText("Each group is compared to this one; p-values depend on it.")),
-    # Picks are labelled in plot order, which the reference sets
-    conditionalPanel("input.advanced && input.cmp == 'sel'",
-      selectizeInput("sel_pairs", "Comparisons to test", choices = NULL, multiple = TRUE,
-                     options = list(plugins = list("remove_button"), placeholder = "All pairs"))),
     actionButton("run", "4. Run models", class = "btn-primary"),
     div(class = "small text-muted mt-3",
         "Original script: Dr. Luis Gustavo Hernandez Carballo", br(),
@@ -1232,8 +1224,7 @@ use the model (CI or SE). Don't re-test them.
 - **Allow line-specific treatment effects** (same line in several groups):
   adds `(1 | Line:Tx)`. Each line can respond differently; the test then asks
   whether the effect holds across lines. Needs several lines.
-- **Comparisons:** each vs reference (Dunnett, emmeans' dunnettx approximation)
-  or selected comparisons (Holm; CIs use Bonferroni).
+- **Comparisons:** each vs reference (Dunnett, emmeans' dunnettx approximation).
 
 Package documentation: [lme4](https://CRAN.R-project.org/package=lme4) \u00b7 [lmerTest](https://CRAN.R-project.org/package=lmerTest) \u00b7
 [pbkrtest](https://CRAN.R-project.org/package=pbkrtest) \u00b7 [emmeans](https://CRAN.R-project.org/package=emmeans). Exact calls:
@@ -1274,17 +1265,6 @@ server <- function(input, output, session) {
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
 
-  # Comparison labels: later vs earlier group in plot order, as in the tables
-  pick_label <- function(a, b) {
-    ord <- tx_order(prep()$datos, list(order = tx_ord(), ref = input$ref))
-    ifelse(match(a, ord) > match(b, ord), paste(a, "vs", b), paste(b, "vs", a))
-  }
-  observe({
-    prs <- combn(levels(prep()$datos$Tx), 2)
-    updateSelectizeInput(session, "sel_pairs", selected = isolate(input$sel_pairs),
-      choices = setNames(paste(prs[1, ], prs[2, ], sep = "|"), pick_label(prs[1, ], prs[2, ])))
-  })
-
   # Default-mode helper: the Advanced options the answers point to
   need_answers <- function()
     vapply(names(adv_qs), function(k) { x <- input[[paste0("need_", k)]]; if (is.null(x)) "" else x }, "")
@@ -1307,22 +1287,12 @@ server <- function(input, output, session) {
       div(class = "text-muted", "From your answers on the Welcome page."))
   })
 
-  # Split and combined: skipped subsets, and picks within one pooled group (no counterpart)
+  # Split and combined: subsets skipped (one line and one batch)
   split_note <- function(params) {
     s <- split_all()[params]
     sk <- unlist(Map(function(p, x) if (length(x$skipped)) paste(p, x$skipped), names(s), s))
-    same <- NULL
-    if (cmp_mode() == "sel" && length(input$sel_pairs)) {
-      ab <- do.call(rbind, strsplit(input$sel_pairs, "|", fixed = TRUE))
-      same <- pool_name(ab[, 1]) == pool_name(ab[, 2])
-    }
-    tagList(
-      if (length(sk)) div(class = "alert alert-warning small py-1 px-2",
-        paste0("Subsets skipped, one line and one batch only: ", paste(sk, collapse = "; "), ".")),
-      if (any(same)) div(class = "alert alert-warning small py-1 px-2",
-        "Not used in Split and combined (both groups pool to one): ",
-        paste0(paste(pick_label(ab[same, 1], ab[same, 2]), collapse = "; "), "."),
-        if (all(same)) " No selected comparison applies here, so all pooled comparisons are shown."))
+    if (length(sk)) div(class = "alert alert-warning small py-1 px-2",
+      paste0("Subsets skipped, one line and one batch only: ", paste(sk, collapse = "; "), "."))
   }
   output$split_note_pairs <- renderUI(split_note(names(split_all())))
   output$split_note_plot <- renderUI(split_note(input$plot_param))
@@ -1351,15 +1321,12 @@ server <- function(input, output, session) {
   design <- function() if (isTRUE(input$advanced) && !is.null(input$design)) input$design else "nested"
   line_tx <- function() isTRUE(input$advanced) && isTRUE(input$line_tx)
   cmp_mode <- function() if (isTRUE(input$advanced) && !is.null(input$cmp)) input$cmp else "all"
-  cmp_adjust <- function() switch(cmp_mode(), ref = "dunnett", sel = "holm", input$adjust)
+  cmp_adjust <- function() if (cmp_mode() == "ref") "dunnett" else input$adjust
   # One result with the chosen comparisons (tables and brackets)
-  with_cmp <- function(x, ref, sel = input$sel_pairs) {
-    x$pairs <- comparisons(x, cmp_mode(), cmp_adjust(), ref, sel)
+  with_cmp <- function(x, ref) {
+    x$pairs <- comparisons(x, cmp_mode(), cmp_adjust(), ref)
     x
   }
-  # Selected comparisons in pooled names (Split and combined)
-  pool_sel <- function() unique(vapply(strsplit(as.character(input$sel_pairs), "|", fixed = TRUE),
-                                       function(p) paste(pool_name(p), collapse = "|"), ""))
 
   # Same line in several groups: optional line-specific treatment effect
   output$line_tx_ui <- renderUI({
@@ -1577,7 +1544,7 @@ server <- function(input, output, session) {
   # Chosen comparisons per result; redone when the choice changes, not on plot tweaks
   cmp_res <- reactive(lapply(results()$res, with_cmp, ref = input$ref))
   cmp_split <- reactive(lapply(split_all(), function(s) {
-    s$res <- lapply(s$res, with_cmp, ref = pool_name(input$ref), sel = pool_sel())
+    s$res <- lapply(s$res, with_cmp, ref = pool_name(input$ref))
     s
   }))
 

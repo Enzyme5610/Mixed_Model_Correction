@@ -7,7 +7,7 @@ Data is local to your platform (PC/Mac/Linux).
 
 The regular version uses the nested model. The **Advanced designs** switch
 (sidebar) adds crossed batches, matched lines, line-specific treatment effects
-and more comparisons
+and each-vs-reference comparisons
 ([Advanced designs](#advanced-designs)).
 
 **App:** https://enzyme5610.github.io/Mixed_Model_Correction/
@@ -172,9 +172,8 @@ corrected clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Tx)`.
 Background is removed and each line can respond differently. Matched lines and
 line-specific effects work with nested and crossed.
 
-**Comparisons:** all pairs (Bonferroni or Tukey), each group vs the reference
-(Dunnett, emmeans' `dunnettx` approximation), or selected comparisons (Holm;
-their confidence intervals use Bonferroni). Same model, no refit; tables and
+**Comparisons:** all pairs (Bonferroni or Tukey) or each group vs the reference
+(Dunnett, emmeans' `dunnettx` approximation). Same model, no refit; tables and
 plot brackets show only the tested pairs. With each vs reference, the
 reference group decides which comparisons are tested.
 
@@ -189,7 +188,6 @@ What runs for each parameter, with links to each package's documentation:
 | Model means, SE, 95% CI | `emmeans(fit, "Tx", lmer.df = "kenward-roger")` | [emmeans: models](https://rvlenth.github.io/emmeans/articles/sophisticated.html) |
 | All pairs | `pairs(emm, adjust = "bonferroni")` or `"tukey"` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Each vs reference (Advanced) | `contrast(emm, "trt.vs.ctrl", adjust = "dunnettx")` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
-| Selected comparisons (Advanced) | `contrast(emm, <chosen pairs>, adjust = "holm")` | [emmeans: confidence intervals](https://rvlenth.github.io/emmeans/articles/confidence-intervals.html) |
 | Group × Subset | `anova(lmer(parameter ~ Group * Subset + <random effects> + (1 \| Line:Group) or (1 \| Line:Subset)), type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
 | Group × Subset change | `contrast(emmeans(fit, ~ Group * Subset), interaction = "revpairwise")` | [emmeans: interactions](https://rvlenth.github.io/emmeans/articles/interactions.html) |
 | FDR q-values | `p.adjust(p, "BH")` across parameters | [stats](https://stat.ethz.ch/R-manual/R-devel/library/stats/html/p.adjust.html) |
@@ -198,8 +196,7 @@ What runs for each parameter, with links to each package's documentation:
 
 Kenward-Roger corrects both the standard errors and the degrees of freedom for
 small samples. Pairwise confidence intervals use the same adjustment as their
-p-values, except Holm, which has no interval version: those intervals use
-Bonferroni. `dunnettx` is emmeans' approximation to Dunnett's test.
+p-values. `dunnettx` is emmeans' approximation to Dunnett's test.
 
 ## Credits
 
