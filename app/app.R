@@ -390,6 +390,8 @@ type_key <- function(opt) {
     mean_row)
 }
 
+err_choices <- c("95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd", "None" = "none")
+
 err_label <- function(opt) {
   switch(opt$err, ci = "Model mean\n± 95% CI", se = "Model mean\n± SE",
          sem = "Mean ± SEM", sd = "Mean ± SD", none = "Mean")
@@ -1156,9 +1158,7 @@ ui <- page_sidebar(
           uiOutput("dot_style_ui"),
           sliderInput("pt_size", "Dot size", min = 0.4, max = 2, value = 1, step = 0.1)),
         accordion_panel("4. Mean & error bars",
-          selectInput("err", "Error bars", selected = "sem", choices = c(
-            "95% CI (model)" = "ci", "SE (model)" = "se", "SEM" = "sem", "SD" = "sd",
-            "None" = "none")),
+          selectInput("err", "Error bars", selected = "sem", choices = err_choices),
           conditionalPanel("input.err == 'sem' || input.err == 'sd'",
             helpText("SEM and SD use the raw values and ignore Line and Batch.")),
           conditionalPanel("input.type != 'bar' && input.err != 'none'",
@@ -1219,8 +1219,8 @@ difference between subsets, with 95% CI (`emmeans` interaction contrast).
 
 **Plots.** Display only; statistics always use the values as entered.
 Model CI/SE match the statistics; SEM/SD ignore Line and Batch.
-Batch-adjusted values subtract each batch's estimated shift; don't re-test
-them.
+Batch-adjusted values subtract each batch's estimated shift; error bars then
+use the model (CI or SE). Don't re-test them.
 
 ---
 
@@ -1622,8 +1622,23 @@ server <- function(input, output, session) {
     sel <- if (is.null(r)) NULL else if (identical(input$fig, "all"))
       r$res[param_labels() %in% input$multi] else list(current())
     msg <- unique(vapply(sel, function(x) adj_text(x$rand), ""))
-    helpText(if (length(msg) == 1) msg else "Batch shifts removed.", "Display only.")
+    helpText(if (length(msg) == 1) msg else "Batch shifts removed.", "Display only; model error bars.")
   })
+
+  # Batch-adjusted dots: model error bars only (SEM/SD of adjusted values shrink);
+  # SEM or SD comes back when adjustment is turned off
+  err_auto <- reactiveVal(NULL)
+  observeEvent(input$adj_batch, {
+    if (isTRUE(input$adj_batch)) {
+      err_auto(if (input$err %in% c("sem", "sd")) input$err)
+      updateSelectInput(session, "err", choices = err_choices[err_choices %in% c("ci", "se", "none")],
+                        selected = if (is.null(err_auto())) input$err else "ci")
+    } else {
+      updateSelectInput(session, "err", choices = err_choices,
+                        selected = if (!is.null(err_auto()) && input$err == "ci") err_auto() else input$err)
+      err_auto(NULL)
+    }
+  }, ignoreInit = TRUE)
 
   output$resid_plot <- renderPlot({
     r <- results()
@@ -1701,7 +1716,8 @@ server <- function(input, output, session) {
                        cols = input$cols, shapes = input$shapes, order = tx_ord(), group_names = input$glabs,
                        labels = input$sig, size = input$pt_size,
                        brackets = !identical(input$sig, "none"), scale = input$scale, ref = input$ref,
-                       ylab = input$ylab, err = input$err,
+                       ylab = input$ylab,
+                       err = if (isTRUE(input$adj_batch) && input$err %in% c("sem", "sd")) "ci" else input$err,
                        center = input$center, rot = input$rot,
                        adj_batch = input$adj_batch, outliers = input$outliers))
 

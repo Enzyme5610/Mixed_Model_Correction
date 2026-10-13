@@ -97,6 +97,8 @@ Statistics always use the values as entered.
 **Batch-adjusted values** (optional) subtract each batch's estimated shift
 from the plotted values, using the model's random-effect estimates (BLUPs):
 each line's batch-to-batch deviation. For display only. Statistics are unchanged, adjusted values shouldn't be re-tested.
+Error bars then use the model (95% CI or SE); SEM and SD would shrink with the
+adjustment, so they return when it is turned off.
 
 Comparisons read as the group plotted later minus the one plotted earlier. The
 reference (control) group plots first, so its comparisons read other −
