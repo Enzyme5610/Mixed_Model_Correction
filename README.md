@@ -141,8 +141,8 @@ renamed the same way (e.g. Combined to All).
 
 Turn on **Advanced designs** in the sidebar. Everything above still applies;
 Advanced adds the following. The sidebar's example file then switches to one
-with every Advanced feature: parental and corrected clones (matched lines),
-each with vehicle and drug, on plates shared by all lines.
+with every Advanced feature: healthy lines and mutant clones made from them
+(matched lines), each with vehicle and drug, on plates shared by all lines.
 
 **Crossed batch design** (some ephys, most qPCR): runs that held several lines
 and were repeated on other days (qPCR plate, or several lines recorded the
@@ -156,8 +156,8 @@ falls back to nested. Batch-adjusted values remove each run's shared shift and
 each line's shift within it.
 
 **Matched lines** (sidebar checkbox, shown when some lines aren't in the
-reference group): lines come in matched pairs (e.g. parental and corrected
-clone). Each line is matched to its partner in the reference group. Comparing
+reference group): lines come in matched pairs (e.g. a healthy line and a
+mutant clone made from it). Each line is matched to its partner in the reference group. Comparing
 within each pair removes donor differences, so real effects are easier to
 detect. Adds
 `(1 | Pair)`.
@@ -167,8 +167,8 @@ same line is in several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`.
 Each line can respond differently; the test then asks whether the effect holds
 across lines. Needs several lines.
 
-**Both together:** matched lines, each in several groups (parental and
-corrected clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Tx)`.
+**Both together:** matched lines, each in several groups (healthy line and
+mutant clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Tx)`.
 Background is removed and each line can respond differently. Matched lines and
 line-specific effects work with nested and crossed.
 

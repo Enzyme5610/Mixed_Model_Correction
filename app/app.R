@@ -771,7 +771,7 @@ trend_pic <- function(groups, ys, cols, labs, under = "") {
   svg_pic('<path d="M30 90H285" stroke="#999"/>', paste(lines, collapse = ""), svg_text(x, 101, groups, 8), under)
 }
 # Pairs sit at different heights (background) but change alike
-pair_pic <- function() trend_pic(c("Parental", "Corrected"), list(c(2.5, 4.5), c(6.5, 8.5), c(4.5, 6.5)),
+pair_pic <- function() trend_pic(c("Healthy", "Mutant"), list(c(2.5, 4.5), c(6.5, 8.5), c(4.5, 6.5)),
                                  sheet_cols[c("g", "p", "o")], paste("Pair", 1:3))
 # Each line responds differently
 linetx_pic <- function() trend_pic(c("Vehicle", "Drug"), list(c(4, 8.5), c(5.5, 6), c(2.5, 4.5)),
@@ -780,13 +780,13 @@ linetx_pic <- function() trend_pic(c("Vehicle", "Drug"), list(c(4, 8.5), c(5.5, 
 both_pic <- function() trend_pic(c("veh", "drug", "veh", "drug"),
   list(c(2.5, 5, NA, NA), c(NA, NA, 4.5, 5.5), c(6, 7, NA, NA), c(NA, NA, 8, 9.5)),
   sheet_cols[c("g", "g", "p", "p")], c("", "Pair 1", "", "Pair 2"),
-  svg_text(c(90, 210), 110, c("Parental", "Corrected"), 8))
+  svg_text(c(90, 210), 110, c("Healthy", "Mutant"), 8))
 
 # Advanced options: question, option, what it does (default-mode helper and Advanced cheat sheet)
 adv_qs <- list(
   crossed = c("Did one plate or recording day hold more than one line?", "Batch design: Crossed",
               "Removes the plate or day shift shared by those lines"),
-  pair = c("Do lines come in matched pairs from the same donor (e.g. parental and corrected clone)?",
+  pair = c("Do lines come in matched pairs from the same donor (e.g. a healthy line and a mutant clone made from it)?",
            "Matched lines", "Removes donor differences, so real effects are easier to detect"),
   line_tx = c("Did the same line get more than one treatment (e.g. vehicle and drug)?",
               "Allow line-specific treatment effects", "Lines can respond differently, so one line can't drive the result"),
@@ -909,13 +909,13 @@ welcome_page <- function() {
       h5(class = "mt-4", "Matched lines and line-specific effects"),
       p(class = "small", "Sidebar options; each works with nested and crossed."),
       div(class = "mmc-designs mmc-3",
-        card("Matched lines", paste("Each corrected clone is matched to its parental line (same donor).",
+        card("Matched lines", paste("Each mutant clone is matched to the healthy line it was made from (same donor).",
              "Comparing within each pair removes donor differences, so real effects are easier to detect."),
              pair_pic(), "(1|Pair)"),
         card("Line-specific treatment effects", paste("Same lines in several groups (vehicle and drug).",
              "Lines can respond differently; the test asks whether the effect holds across lines. Needs",
              "several lines."), linetx_pic(), "(1|Line:Tx)"),
-        card("Both", paste("Matched lines, each in several groups (parental and corrected, each with",
+        card("Both", paste("Matched lines, each in several groups (healthy and mutant, each with",
              "vehicle and drug): background removed, and each line can respond differently."),
              both_pic(), "(1|Pair) + (1|Line:Tx)")),
       h5(class = "mt-4", "Comparisons"),
@@ -1228,7 +1228,7 @@ use the model (CI or SE). Don't re-test them.
 **Advanced designs** (sidebar switch)
 
 - **Crossed** (lines shared a batch): `(1 | Line) + (1 | Batch) + (1 | Line:Batch)`.
-- **Matched lines** (parental and corrected clone): adds `(1 | Pair)`.
+- **Matched lines** (healthy line and mutant clone): adds `(1 | Pair)`.
 - **Allow line-specific treatment effects** (same line in several groups):
   adds `(1 | Line:Tx)`. Each line can respond differently; the test then asks
   whether the effect holds across lines. Needs several lines.
@@ -1356,7 +1356,7 @@ server <- function(input, output, session) {
     if (!length(pl$other) || !length(pl$in_ref)) return(NULL)
     cur <- isolate(input$pairs)
     tagList(
-      checkboxInput("pair_on", "Matched lines (e.g. parental and corrected clone)", isolate(isTRUE(input$pair_on))),
+      checkboxInput("pair_on", "Matched lines (e.g. healthy line and mutant clone)", isolate(isTRUE(input$pair_on))),
       conditionalPanel("input.pair_on", tags$table(class = "table table-sm align-middle mb-2",
         tags$tr(tags$th("Line"), tags$th(paste0("Matched to (", pl$ref, ")"))),
         lapply(pl$other, function(l) tags$tr(tags$td(l), tags$td(tags$select(
