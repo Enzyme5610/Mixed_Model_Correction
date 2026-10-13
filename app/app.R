@@ -784,8 +784,8 @@ both_pic <- function() trend_pic(c("veh", "drug", "veh", "drug"),
 
 # Advanced options: question, option, what it does (default-mode helper and Advanced cheat sheet)
 adv_qs <- list(
-  crossed = c("Did one plate or recording day hold more than one line?", "Batch design: Crossed",
-              "Removes the plate or day shift shared by those lines"),
+  crossed = c("Did several lines share each plate or recording day, over several plates or days?",
+              "Batch design: Crossed", "Removes the shift each plate or day put on all its lines"),
   pair = c("Do lines come in matched pairs from the same donor (e.g. a healthy line and a mutant clone made from it)?",
            "Matched lines", "Removes donor differences, so real effects are easier to detect"),
   line_tx = c("Did the same line get more than one treatment (e.g. vehicle and drug)?",
@@ -840,7 +840,7 @@ welcome_page <- function() {
       fb("Each line in one group (e.g. Control lines vs AD lines)", "Culture batch or coverslip"),
       fb("Same line in several groups (e.g. vehicle and drug)",
          "The unit that got one treatment, usually the coverslip or well"),
-      fb("One plate or recording day held several lines", "The shared plate or day (crossed design)"),
+      fb("Several lines shared plates or recording days", "The shared plate or day (crossed design)"),
       fb("No batch recorded", tagList("B1 on every row (model: ", tags$code("y ~ Tx + (1|Line)", .noWS = "after"), ")"))),
     # Batch column examples for the first two rows above
     div(class = "mmc-designs",
@@ -861,8 +861,8 @@ welcome_page <- function() {
       p(class = "small text-muted", "None: the default nested model with all pairs. Choose from how the",
         "experiment was run, not from the results."),
       h5(class = "mt-4", "Batch design"),
-      p(class = "small text-muted", "A line in several batches is normal in both designs. Crossed only",
-        "if one batch held more than one line."),
+      p(class = "small text-muted", "A line in several batches is normal in both designs. Crossed when",
+        "several plates or days were each shared by lines."),
       div(class = "mmc-designs",
         div(class = "border rounded p-2 mmc-card",
           div(strong("Nested (most ephys, some qPCR)"), p(class = "small mb-0",

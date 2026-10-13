@@ -48,7 +48,7 @@ grown or treated together. What to enter:
 |---|---|
 | Each line in one group (e.g. Control lines vs AD lines) | Culture batch (differentiation round) or coverslip |
 | Same line in several groups (e.g. vehicle and drug) | The unit that got one treatment, usually the coverslip or well |
-| One plate or recording day held several lines | The shared plate or day ([crossed design](#advanced-designs)) |
+| Several lines shared plates or recording days | The shared plate or day ([crossed design](#advanced-designs)) |
 | No batch recorded | `B1` on every row (model: `parameter ~ Tx + (1 \| Line)`) |
 
 Number each line's batches B1, B2. Another line's B1 is a different batch,
