@@ -10,16 +10,18 @@ library(emmeans)
 prepare_data <- function(path) {
   datos <- read.csv(path, header = TRUE, check.names = FALSE, na.strings = c("", "NA"))
   original_names <- names(datos)
-  if (!all(c("Tx", "Line", "Batch") %in% original_names))
-    stop("The table must include columns named Tx, Line and Batch.")
+  # Group column: Group, or Tx in older files
+  if (!"Group" %in% original_names) original_names[original_names == "Tx"] <- "Group"
+  if (!all(c("Group", "Line", "Batch") %in% original_names))
+    stop("The table must include columns named Group (or Tx), Line and Batch.")
   names(datos) <- make.names(original_names, unique = TRUE)
-  datos <- datos[!is.na(datos$Tx), ]  # drop empty rows
+  datos <- datos[!is.na(datos$Group), ]  # drop empty rows
   if (anyNA(datos$Line) || anyNA(datos$Batch)) stop("Line and Batch must be filled in on every row.")
   # Levels in CSV order
-  for (v in intersect(c("Tx", "Line", "Batch"), names(datos)))
+  for (v in intersect(c("Group", "Line", "Batch"), names(datos)))
     datos[[v]] <- factor(datos[[v]], levels = unique(datos[[v]]))
-  if (nlevels(datos$Tx) < 2) stop("Tx must have at least two groups.")
-  cols <- which(!original_names %in% c("Tx", "Line", "Batch") &
+  if (nlevels(datos$Group) < 2) stop("Group must have at least two groups.")
+  cols <- which(!original_names %in% c("Group", "Line", "Batch") &
                 nzchar(trimws(original_names)))  # skip blank headers
   # Metadata (dates, IDs, wells) and constant columns aren't preselected
   meta <- grepl("date|day|well|passage|(^|[^a-z])id($|[^a-z])", original_names[cols], ignore.case = TRUE) |
@@ -32,7 +34,7 @@ prepare_data <- function(path) {
 # Random effects; Advanced adds matched pairs (Pair, set in the sidebar) and a
 # treatment effect per line (same line in several groups)
 random_term <- function(datos, design = "nested", line_tx = FALSE) {
-  extra_terms(datos, base_term(datos, design), c(list("Pair"), if (line_tx) list(c("Line", "Tx"))))
+  extra_terms(datos, base_term(datos, design), c(list("Pair"), if (line_tx) list(c("Line", "Group"))))
 }
 
 # Extra terms, each only if in the data and estimable
@@ -74,7 +76,7 @@ base_term <- function(datos, design = "nested") {
 
 # Random-effect terms in plain words (singular-fit warnings)
 term_names <- c(Line = "line-to-line variation", "Line:Batch" = "batch-to-batch variation within lines",
-                Batch = "shared batch shift", Pair = "pair background", "Line:Tx" = "line-specific treatment effect")
+                Batch = "shared batch shift", Pair = "pair background", "Line:Group" = "line-specific treatment effect")
 
 run_models <- function(prep, vars, progress = function(n, label) NULL,
                        design = "nested", line_tx = FALSE) {
@@ -93,13 +95,13 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
       skipped <- c(skipped, label)
       next
     }
-    f <- reformulate(c("Tx", rand), var)
+    f <- reformulate(c("Group", rand), var)
     warn <- character()
     res <- withCallingHandlers(
       tryCatch({
         MM_Form <- lmerTest::lmer(f, data = datos, REML = TRUE)
         anova_result <- stats::anova(MM_Form, type = "II", ddf = "Kenward-Roger")
-        em <- emmeans(MM_Form, specs = "Tx", lmer.df = "kenward-roger")
+        em <- emmeans(MM_Form, specs = "Group", lmer.df = "kenward-roger")
         means <- as.data.frame(summary(em))
         list(MM_Form = MM_Form, anova = anova_result, means = means, em = em)
       }, error = function(e) {
@@ -148,7 +150,7 @@ adjust_label <- function(adjust, k) {
 
 # Comparisons from the model's means: all pairs or each vs reference (Dunnett)
 comparisons <- function(res, mode = "all", adjust = "bonferroni", ref = NULL) {
-  lev <- as.character(res$means$Tx)
+  lev <- as.character(res$means$Group)
   if (mode == "ref") {
     k <- if (isTRUE(ref %in% lev)) match(ref, lev) else 1
     ct <- emmeans::contrast(res$em, "trt.vs.ctrl", ref = k, adjust = "dunnettx")
@@ -196,7 +198,7 @@ star_key <- function(opt, x, y) {
 
 # Group order: user's order if valid, else reference first then CSV order
 tx_order <- function(datos, opt) {
-  lev <- levels(datos$Tx)
+  lev <- levels(datos$Group)
   ord <- unlist(opt$order)
   if (length(ord) == length(lev) && setequal(ord, lev)) return(ord)
   ref <- if (isTRUE(opt$ref %in% lev)) opt$ref else lev[1]
@@ -210,7 +212,7 @@ shape_set <- c("● Circle" = 19, "■ Square" = 15, "▲ Triangle" = 17, "◆ D
 
 # Per-level color or shape by Line, Batch or Group; user picks override defaults
 dot_style <- function(datos, opt, by, what = "col") {
-  f <- switch(by, line = datos$Line, batch = datos$Batch, group = datos$Tx, NULL)
+  f <- switch(by, line = datos$Line, batch = datos$Batch, group = datos$Group, NULL)
   if (is.null(f) || nlevels(f) == 0) return(NULL)
   lev <- if (by == "group") tx_order(datos, list(ref = opt$ref)) else levels(f)
   n <- length(lev)
@@ -280,10 +282,10 @@ adj_text <- function(rand) {
 
 # Display values, center and error bars for one parameter
 plot_stats <- function(datos, res, opt) {
-  lev <- levels(datos$Tx)
+  lev <- levels(datos$Group)
   means <- res$means
   ref <- if (isTRUE(opt$ref %in% lev)) opt$ref else lev[1]  # plotted first
-  ref_mean <- means$emmean[as.character(means$Tx) == ref]
+  ref_mean <- means$emmean[as.character(means$Group) == ref]
   # Ratios need positive values; otherwise direction can flip (e.g. negative dCt)
   ratio_ok <- ref_mean > 0 && all(datos[[res$var]] > 0, na.rm = TRUE)
   scale <- if (opt$scale == "ratio" && !ratio_ok) "raw" else opt$scale
@@ -294,12 +296,12 @@ plot_stats <- function(datos, res, opt) {
   raw <- datos[[res$var]]
   shift <- if (opt$adj_batch) batch_shift(datos, res)
   y <- tf(if (is.null(shift)) raw else raw - shift)  # display only
-  g <- as.character(means$Tx)
+  g <- as.character(means$Group)
   # Model-based (CI, SE) or raw (SEM, SD)
   if (opt$err %in% c("sem", "sd", "none")) {
-    m <- tapply(y, datos$Tx, mean, na.rm = TRUE)[g]
-    s <- tapply(y, datos$Tx, sd, na.rm = TRUE)[g]
-    if (opt$err == "sem") s <- s / sqrt(tapply(!is.na(y), datos$Tx, sum)[g])
+    m <- tapply(y, datos$Group, mean, na.rm = TRUE)[g]
+    s <- tapply(y, datos$Group, sd, na.rm = TRUE)[g]
+    if (opt$err == "sem") s <- s / sqrt(tapply(!is.na(y), datos$Group, sum)[g])
     if (opt$err == "none") s <- 0
     lo <- m - s; hi <- m + s
   } else {
@@ -419,7 +421,7 @@ key_legend <- function(lx, ky, key, opt) {
 
 draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   opt <- modifyList(plot_defaults, Filter(Negate(is.null), opt))
-  lev <- levels(datos$Tx)
+  lev <- levels(datos$Group)
   k <- length(lev)
   cs <- dot_style(datos, opt, opt$color_by)
   ss <- dot_style(datos, opt, opt$shape_by, "pch")
@@ -429,7 +431,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   st <- plot_stats(datos, res, opt)
   ord <- st$ord
   pos <- match(lev, ord)
-  xs <- pos[as.integer(datos$Tx)]
+  xs <- pos[as.integer(datos$Group)]
   xm <- pos[match(st$g, lev)]
   scale <- st$scale
   ylab <- scale_label(st, res$label, opt)
@@ -516,7 +518,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
   off <- (seq_len(k) - (k + 1) / 2) * w
   gs <- dot_style(datos, opt, "group")
   cols <- gs$val[match(ord, gs$lev)]
-  gi <- match(as.character(datos$Tx), ord)
+  gi <- match(as.character(datos$Group), ord)
   cs <- if (opt$color_by != "group") dot_style(datos, opt, opt$color_by)  # groups have a legend
   ss <- dot_style(datos, opt, opt$shape_by, "pch")
   labels <- vapply(results, `[[`, "", "label")
@@ -598,15 +600,15 @@ pool_name <- function(x) sub("_[^_]*$", "", x)
 
 # One parameter as clusters by name suffix (M, F) plus Combined, each its own model
 split_prep <- function(p, var) {
-  tx <- as.character(p$datos$Tx)
+  tx <- as.character(p$datos$Group)
   part <- sub("^.*_", "", tx)
   grp <- pool_name(tx)
   ok <- all(grepl("_", tx)) && length(unique(part)) > 1 && length(unique(grp)) > 1 &&
     all(table(grp, part) > 0)
   validate(need(ok, "Split and combined needs every group named like Ctrl_M, Ctrl_F, KO_M, KO_F."))
   d <- p$datos
-  d$Tx <- factor(grp, levels = unique(pool_name(levels(p$datos$Tx))))
-  parts <- unique(sub("^.*_", "", levels(p$datos$Tx)))
+  d$Group <- factor(grp, levels = unique(pool_name(levels(p$datos$Group))))
+  parts <- unique(sub("^.*_", "", levels(p$datos$Group)))
   vars <- paste0(".split", seq_along(parts))
   for (i in seq_along(parts)) d[[vars[i]]] <- ifelse(part == parts[i], d[[var]], NA)
   d$.split_all <- d[[var]]
@@ -618,7 +620,7 @@ split_prep <- function(p, var) {
 # 2 groups x 2 subsets: also the change, (g2 - g1 in s2) - (g2 - g1 in s1), with CI
 split_interaction <- function(d, var, label, design) {
   d <- droplevels(d[!is.na(d[[var]]), ])
-  g <- levels(d$Tx)
+  g <- levels(d$Group)
   s <- levels(d$.subset)
   none <- list(estimate = NA, lower.CL = NA, upper.CL = NA)
   out <- function(F = NA, df1 = NA, df2 = NA, pv = NA, note = "", ic = none)
@@ -630,12 +632,12 @@ split_interaction <- function(d, var, label, design) {
     return(out(note = "Needs 2+ lines per subset"))
   # Group or subset within lines: its effect may differ by line
   rand <- extra_terms(d, random_term(d, design, line_tx = TRUE), list(c("Line", ".subset")))
-  m <- suppressMessages(suppressWarnings(lmerTest::lmer(reformulate(c("Tx * .subset", rand), var),
+  m <- suppressMessages(suppressWarnings(lmerTest::lmer(reformulate(c("Group * .subset", rand), var),
                                                         data = d, REML = TRUE)))
-  a <- stats::anova(m, type = "II", ddf = "Kenward-Roger")["Tx:.subset", ]
+  a <- stats::anova(m, type = "II", ddf = "Kenward-Roger")["Group:.subset", ]
   if (!is.finite(a[["F value"]]) || a[["F value"]] < 0) return(out(note = "Not estimable"))
   ic <- if (length(g) == 2 && length(s) == 2) summary(emmeans::contrast(
-    emmeans::emmeans(m, ~ Tx * .subset, lmer.df = "kenward-roger"),
+    emmeans::emmeans(m, ~ Group * .subset, lmer.df = "kenward-roger"),
     interaction = c("revpairwise", "revpairwise")), infer = TRUE) else none
   out(a[["F value"]], a$NumDF, a$DenDF, a[["Pr(>F)"]], ic = ic)
 }
@@ -646,9 +648,9 @@ shared_batches <- function(d) {
   Filter(function(x) length(x) > 1, lapply(split(as.character(d$Line), d$Batch), unique))
 }
 
-# Rows per Line x Batch, split by Tx
+# Rows per Line x Batch, split by Group
 design_table <- function(d) {
-  n <- table(d$Line, d$Batch, d$Tx)
+  n <- table(d$Line, d$Batch, d$Group)
   cell <- apply(n, 1:2, function(x) paste(paste(names(x)[x > 0], x[x > 0]), collapse = ", "))
   data.frame(Line = rownames(cell), cell, check.names = FALSE, row.names = NULL)
 }
@@ -669,7 +671,7 @@ sheet_cols <- c(g = "#0F6E56", p = "#534AB7", o = "#D85A30", b = "#185FA5",
                 y = "#854F0B", k = "#993556")
 
 # Mini spreadsheet; color = one run
-batch_sheet <- function(rows, caption, formula = NULL, head = c("Tx", "Line", "Batch")) {
+batch_sheet <- function(rows, caption, formula = NULL, head = c("Group", "Line", "Batch")) {
   bg <- function(k) if (k %in% names(sheet_cols)) sheet_cols[[k]] else k
   tagList(
     tags$table(class = "mmc-sheet",
@@ -804,7 +806,7 @@ welcome_page <- function() {
     tags$span(`data-display-if` = "input.design != 'crossed'", `data-ns-prefix` = "", "(1|Line/Batch)"),
     tags$span(`data-display-if` = "input.design == 'crossed'", `data-ns-prefix` = "",
               "(1|Line) + (1|Batch) + (1|Line:Batch)"))
-  model <- function(add) tags$code("y ~ Tx +", base, tags$span(class = "mmc-add", paste("+", add)))
+  model <- function(add) tags$code("y ~ Group +", base, tags$span(class = "mmc-add", paste("+", add)))
   card <- function(title, text, pic, add) div(class = "border rounded p-2 mmc-card",
     div(strong(title), p(class = "small mb-0", text)), pic, div(class = "small", model(add)))
   nested_sheet <- function(caption) batch_sheet(list(
@@ -822,7 +824,7 @@ welcome_page <- function() {
       "data stays on your computer."),
     h5(class = "mt-4", "How to use"),
     div(class = "mmc-steps",
-      step("1", "Upload CSV", "Tx, Line, Batch + parameters"), arrow,
+      step("1", "Upload CSV", "Group, Line, Batch + parameters"), arrow,
       step("2", "Parameters", "Numeric columns preselected"), arrow,
       # Advanced: design step, then comparisons, as in the sidebar
       conditionalPanel("input.advanced",
@@ -840,7 +842,7 @@ welcome_page <- function() {
       fb("Same line in several groups (e.g. vehicle and drug)",
          "The unit that got one treatment, usually the coverslip or well"),
       fb("Several lines shared plates or recording days", "The shared plate or day (crossed design)"),
-      fb("No batch recorded", tagList("B1 on every row (model: ", tags$code("y ~ Tx + (1|Line)", .noWS = "after"), ")"))),
+      fb("No batch recorded", tagList("B1 on every row (model: ", tags$code("y ~ Group + (1|Line)", .noWS = "after"), ")"))),
     # Batch column examples for the first two rows above
     div(class = "mmc-designs",
       conditionalPanel("!input.advanced", div(
@@ -897,10 +899,10 @@ welcome_page <- function() {
     tags$table(class = "table table-sm w-auto mb-1",
       tags$tr(tags$th("Lines"), tags$th("Batches"), tags$th("Model")),
       tags$tr(`data-display-if` = "input.advanced", `data-ns-prefix` = "", tags$td("≥ 2"),
-        tags$td("≥ 2, shared by lines (Crossed)"), tags$td(tags$code("y ~ Tx + (1|Line) + (1|Batch) + (1|Line:Batch)"))),
-      fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Tx + (1|Line/Batch)")),
-      fb("≥ 2", "1 per line", tags$code("y ~ Tx + (1|Line)")),
-      fb("1", "≥ 2", tagList(tags$code("y ~ Tx + (1|Batch)"), " (that line only)")),
+        tags$td("≥ 2, shared by lines (Crossed)"), tags$td(tags$code("y ~ Group + (1|Line) + (1|Batch) + (1|Line:Batch)"))),
+      fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Group + (1|Line/Batch)")),
+      fb("≥ 2", "1 per line", tags$code("y ~ Group + (1|Line)")),
+      fb("1", "≥ 2", tagList(tags$code("y ~ Group + (1|Batch)"), " (that line only)")),
       fb("1", "1", "Skipped")),
     p(class = "small text-muted", "y = one parameter.", tags$span(`data-display-if` = "input.advanced",
       `data-ns-prefix` = "", "Crossed with no shared batch runs as Nested.")),
@@ -913,10 +915,10 @@ welcome_page <- function() {
              pair_pic(), "(1|Pair)"),
         card("Line-specific treatment effects", paste("Same lines in several groups (vehicle and drug).",
              "Lines can respond differently; the test asks whether the effect holds across lines. Needs",
-             "several lines."), linetx_pic(), "(1|Line:Tx)"),
+             "several lines."), linetx_pic(), "(1|Line:Group)"),
         card("Both", paste("Matched lines, each in several groups (healthy and mutant, each with",
              "vehicle and drug): background removed, and each line can respond differently."),
-             both_pic(), "(1|Pair) + (1|Line:Tx)")),
+             both_pic(), "(1|Pair) + (1|Line:Group)")),
       h5(class = "mt-4", "Comparisons"),
       p(class = "small", "All pairs (Bonferroni or Tukey) or each group vs the reference (Dunnett).",
         "Tables and plot brackets show only the tested pairs. With each vs reference, the reference",
@@ -933,7 +935,7 @@ welcome_page <- function() {
         div(batch_sheet(list(
           c("Ctrl_M", "Ctrl", "M", split_cols[1]), c("Ctrl_F", "Ctrl", "F", split_cols[1]),
           c("KO_M", "KO", "M", split_cols[2]), c("KO_F", "KO", "F", split_cols[2])),
-          "Tx split at the last _.", head = c("Tx", "Group", "Subset"))),
+          "Group split at the last _.", head = c("Group", "Pooled group", "Subset"))),
         div()),
       div(class = "border rounded p-2 mmc-card",
         div(strong("Plots and Pairwise: Split and combined")),
@@ -1047,7 +1049,7 @@ ui <- page_sidebar(
       .mmc-arrow { align-self: center; font-size: 1.4rem; color: #888; }
       #design .radio { margin-bottom: .6rem; }"),
     fileInput("file", "1. Upload data (.csv)", accept = c(".csv", "text/csv")),
-    helpText("Needs columns named Tx, Line and Batch (exact spelling), in any position."),
+    helpText("Needs columns named Group (or Tx), Line and Batch (exact spelling), in any position."),
     actionLink("example", tagList("Download an example file", tags$span(`data-display-if` = "input.advanced",
                                                                      `data-ns-prefix` = "", "(Advanced)"))),
     hr(),
@@ -1197,14 +1199,14 @@ ui <- page_sidebar(
       h6("First 50 rows"), tableOutput("preview")),
     nav_panel("About",
       markdown("
-**Model.** Regular version: nested, `parameter ~ Tx + (1 | Line/Batch)`, fit
-with `lmerTest::lmer` (REML); Tx tested by Type II F test, Kenward-Roger method
+**Model.** Regular version: nested, `parameter ~ Group + (1 | Line/Batch)`, fit
+with `lmerTest::lmer` (REML); Group tested by Type II F test, Kenward-Roger method
 (small-sample corrected SEs and df). One Line: `(1 | Batch)`. One Batch, or no
 line with repeat batches: `(1 | Line)`. Warnings, including singular fits (a
 variance estimated as zero), appear under ANOVA results.
 
 **FDR.** q-values (Benjamini-Hochberg) for panels of many similar
-parameters (e.g. gene panels). Adjusts the Tx p-values (not pairwise) across
+parameters (e.g. gene panels). Adjusts the Group p-values (not pairwise) across
 all parameters in a run.
 
 **Pairwise.** `emmeans` from the same model, Bonferroni or Tukey adjusted
@@ -1229,7 +1231,7 @@ use the model (CI or SE). Don't re-test them.
 - **Crossed** (lines shared a batch): `(1 | Line) + (1 | Batch) + (1 | Line:Batch)`.
 - **Matched lines** (healthy line and mutant clone): adds `(1 | Pair)`.
 - **Allow line-specific treatment effects** (same line in several groups):
-  adds `(1 | Line:Tx)`. Each line can respond differently; the test then asks
+  adds `(1 | Line:Group)`. Each line can respond differently; the test then asks
   whether the effect holds across lines. Needs several lines.
 - **Comparisons:** each vs reference (Dunnett, emmeans' dunnettx approximation).
 
@@ -1267,7 +1269,7 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "params",
                          choices = setNames(p$MM_Vars, p$parameter_labels),
                          selected = p$MM_Vars[p$numeric])
-    lev <- levels(p$datos$Tx)
+    lev <- levels(p$datos$Group)
     ctrl <- grep("^(control|ctrl|gfp)", lev, ignore.case = TRUE, value = TRUE)
     updateSelectInput(session, "ref", choices = lev, selected = c(ctrl, lev)[1])
   })
@@ -1338,7 +1340,7 @@ server <- function(input, output, session) {
   # Same line in several groups: optional line-specific treatment effect
   output$line_tx_ui <- renderUI({
     # File errors show in the model note instead
-    within <- tryCatch(with(prep()$datos, any(tapply(Tx, Line, function(t) length(unique(t))) > 1, na.rm = TRUE)),
+    within <- tryCatch(with(prep()$datos, any(tapply(Group, Line, function(t) length(unique(t))) > 1, na.rm = TRUE)),
                        error = function(e) FALSE)
     if (within) checkboxInput("line_tx", "Allow line-specific treatment effects", isolate(isTRUE(input$line_tx)))
   })
@@ -1346,8 +1348,8 @@ server <- function(input, output, session) {
   # Matched lines: each line outside the reference group picks its partner in it
   pair_lines <- reactive({
     d <- prep()$datos
-    ref <- if (isTRUE(input$ref %in% levels(d$Tx))) input$ref else levels(d$Tx)[1]
-    in_ref <- unique(as.character(d$Line[d$Tx == ref]))
+    ref <- if (isTRUE(input$ref %in% levels(d$Group))) input$ref else levels(d$Group)[1]
+    in_ref <- unique(as.character(d$Line[d$Group == ref]))
     list(ref = ref, in_ref = in_ref, other = setdiff(levels(d$Line), in_ref))
   })
   output$pair_ui <- renderUI({
@@ -1461,7 +1463,7 @@ server <- function(input, output, session) {
     o <- list(order = tx_ord(), ref = input$ref, cols = isolate(input$cols))
     ord <- tx_order(d, o)
     if (identical(input$fig, "split") && all(grepl("_", ord))) {
-      d$Tx <- factor(pool_name(as.character(d$Tx)), levels = unique(pool_name(levels(d$Tx))))
+      d$Group <- factor(pool_name(as.character(d$Group)), levels = unique(pool_name(levels(d$Group))))
       o$ref <- pool_name(o$ref)
       ord <- unique(pool_name(ord))
     }
@@ -1476,7 +1478,7 @@ server <- function(input, output, session) {
   observeEvent(input$x_order, x_ord[[x_kind()]] <- unlist(input$x_order))
   output$x_ui <- renderUI({
     kind <- x_kind()
-    lev <- levels(results()$prep$datos$Tx)
+    lev <- levels(results()$prep$datos$Group)
     if (kind == "s" && !all(grepl("_", lev))) return(NULL)
     keys <- if (kind == "s") c(unique(sub("^.*_", "", lev)), "Combined") else intersect(param_labels(), input$multi)
     tags$ul(class = "list-group mmc-order", `data-input` = "x_order",
@@ -1518,7 +1520,7 @@ server <- function(input, output, session) {
 
   # Tables follow the reference group and group order; pairs as "later - earlier"
   ref_order <- reactive({
-    lev <- levels(results()$prep$datos$Tx)
+    lev <- levels(results()$prep$datos$Group)
     ref <- if (isTRUE(input$ref %in% lev)) input$ref else lev[1]
     list(lev = lev, ref = ref,
          ord = tx_order(results()$prep$datos, list(order = tx_ord(), ref = ref)))
@@ -1535,13 +1537,13 @@ server <- function(input, output, session) {
     if (identical(input$scale, "fc")) {
       for (g in setdiff(ro$ord, ro$ref)) {
         df[[paste("FC", g, "vs", ro$ref)]] <- vapply(results()$res, function(r) {
-          m <- setNames(r$means$emmean, r$means$Tx)
+          m <- setNames(r$means$emmean, r$means$Group)
           2^-(m[[g]] - m[[ro$ref]])
         }, 0)
       }
     }
     # Plain column names
-    lab <- c("Sum Sq" = "Sum of squares", "Mean Sq" = "Mean square", NumDF = "df (Tx)",
+    lab <- c("Sum Sq" = "Sum of squares", "Mean Sq" = "Mean square", NumDF = "df (Group)",
              DenDF = "df (error)", "F value" = "F", "Pr(>F)" = "p", q_FDR = "q (FDR)")
     i <- names(df) %in% names(lab)
     names(df)[i] <- lab[names(df)[i]]
@@ -1646,7 +1648,7 @@ server <- function(input, output, session) {
     r <- results(); d <- r$prep$datos
     o <- do.call(rbind, lapply(r$res, function(x) if (nrow(x$out)) data.frame(
       Parameter = x$label, "CSV row" = as.integer(rownames(d)[x$out$i]) + 1L,
-      Tx = d$Tx[x$out$i], Line = d$Line[x$out$i], Batch = d$Batch[x$out$i],
+      Group = d$Group[x$out$i], Line = d$Line[x$out$i], Batch = d$Batch[x$out$i],
       Value = d[[x$var]][x$out$i], "Scaled residual" = x$out$resid, check.names = FALSE)))
     if (is.null(o)) data.frame(Result = "None flagged") else o
   }, digits = 3)

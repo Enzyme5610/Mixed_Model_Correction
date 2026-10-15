@@ -24,11 +24,12 @@ The first load takes about 30 seconds while R loads in the browser.
 
 ## CSV format
 
-One row per measurement, with columns named exactly `Tx`, `Line` and
-`Batch` (any position), plus one column per parameter:
+One row per measurement, with columns named exactly `Group`, `Line` and
+`Batch` (any position), plus one column per parameter (older files that name
+the group column `Tx` still work):
 
 ```
-Tx,Line,Batch,GRIA1,GAD1
+Group,Line,Batch,GRIA1,GAD1
 Control,L1,B1,4.21,6.10
 Control,L1,B2,4.35,6.02
 AD,L5,B1,5.02,7.44
@@ -49,15 +50,15 @@ grown or treated together. What to enter:
 | Each line in one group (e.g. Control lines vs AD lines) | Culture batch (differentiation round) or coverslip |
 | Same line in several groups (e.g. vehicle and drug) | The unit that got one treatment, usually the coverslip or well |
 | Several lines shared plates or recording days | The shared plate or day ([crossed design](#advanced-designs)) |
-| No batch recorded | `B1` on every row (model: `parameter ~ Tx + (1 \| Line)`) |
+| No batch recorded | `B1` on every row (model: `parameter ~ Group + (1 \| Line)`) |
 
 Number each line's batches B1, B2. Another line's B1 is a different batch,
 except in the crossed design, where B1 is one plate or day shared by lines.
 
 ## Model
 
-**Nested** (the regular version): `parameter ~ Tx + (1 | Line/Batch)`, fit with
-`lmerTest::lmer` (REML), with Tx tested by a Type II F test using the
+**Nested** (the regular version): `parameter ~ Group + (1 | Line/Batch)`, fit with
+`lmerTest::lmer` (REML), with Group tested by a Type II F test using the
 Kenward-Roger method (small-sample corrected standard errors and degrees of
 freedom). With one Line the model uses `(1 | Batch)`; with one Batch, or no
 line with repeat batches, `(1 | Line)`; with one of each, the parameter is
@@ -69,7 +70,7 @@ their confidence intervals use the same adjustment. Exact calls:
 estimated as zero, so that term has no effect) are listed under ANOVA results.
 
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
-(e.g. gene panels). Adjusts the Tx p-values (not pairwise) across all
+(e.g. gene panels). Adjusts the Group p-values (not pairwise) across all
 parameters in a run.
 
 **Possible outliers:** cells more than 3 SD from the model's prediction for
@@ -149,7 +150,7 @@ and were repeated on other days (qPCR plate, or several lines recorded the
 same day). Number the shared runs B1, B2 (or use the plate ID or date); the
 same label must mean the same run for every line. A line can be in one run or
 several. Model:
-`parameter ~ Tx + (1 | Line) + (1 | Batch) + (1 | Line:Batch)`, the nested
+`parameter ~ Group + (1 | Line) + (1 | Batch) + (1 | Line:Batch)`, the nested
 model plus a batch shift shared by lines. `(1 | Line:Batch)` is left out with
 one row per line per batch, or one batch per line. Without a shared batch it
 falls back to nested. Batch-adjusted values remove each run's shared shift and
@@ -163,12 +164,12 @@ detect. Adds
 `(1 | Pair)`.
 
 **Allow line-specific treatment effects** (sidebar checkbox, shown when the
-same line is in several groups, e.g. vehicle and drug): adds `(1 | Line:Tx)`.
+same line is in several groups, e.g. vehicle and drug): adds `(1 | Line:Group)`.
 Each line can respond differently; the test then asks whether the effect holds
 across lines. Needs several lines.
 
 **Both together:** matched lines, each in several groups (healthy line and
-mutant clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Tx)`.
+mutant clone, each with vehicle and drug): `(1 | Pair) + (1 | Line:Group)`.
 Background is removed and each line can respond differently. Matched lines and
 line-specific effects work with nested and crossed.
 
@@ -183,9 +184,9 @@ What runs for each parameter, with links to each package's documentation:
 
 | Step | R call | Docs |
 |---|---|---|
-| Fit | `lmerTest::lmer(parameter ~ Tx + <random effects>, REML = TRUE)` | [lme4](https://CRAN.R-project.org/package=lme4), [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
-| Tx test | `anova(fit, type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest), [pbkrtest](https://CRAN.R-project.org/package=pbkrtest) |
-| Model means, SE, 95% CI | `emmeans(fit, "Tx", lmer.df = "kenward-roger")` | [emmeans: models](https://rvlenth.github.io/emmeans/articles/sophisticated.html) |
+| Fit | `lmerTest::lmer(parameter ~ Group + <random effects>, REML = TRUE)` | [lme4](https://CRAN.R-project.org/package=lme4), [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
+| Group test | `anova(fit, type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest), [pbkrtest](https://CRAN.R-project.org/package=pbkrtest) |
+| Model means, SE, 95% CI | `emmeans(fit, "Group", lmer.df = "kenward-roger")` | [emmeans: models](https://rvlenth.github.io/emmeans/articles/sophisticated.html) |
 | All pairs | `pairs(emm, adjust = "bonferroni")` or `"tukey"` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Each vs reference (Advanced) | `contrast(emm, "trt.vs.ctrl", adjust = "dunnettx")` | [emmeans: comparisons](https://rvlenth.github.io/emmeans/articles/comparisons.html) |
 | Group × Subset | `anova(lmer(parameter ~ Group * Subset + <random effects> + (1 \| Line:Group) or (1 \| Line:Subset)), type = "II", ddf = "Kenward-Roger")` | [lmerTest](https://CRAN.R-project.org/package=lmerTest) |
