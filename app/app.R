@@ -206,7 +206,7 @@ tx_order <- function(datos, opt) {
 }
 
 shape_set <- c("● Circle" = 19, "■ Square" = 15, "▲ Triangle" = 17, "◆ Diamond" = 18,
-               "○ Open circle" = 1, "□ Open square" = 0, "△ Open triangle" = 2,
+               "▼ Down triangle" = 25, "○ Open circle" = 1, "□ Open square" = 0, "△ Open triangle" = 2,
                "◇ Open diamond" = 5, "▽ Open down triangle" = 6, "× Cross" = 4,
                "+ Plus" = 3, "✱ Star" = 8)
 
@@ -246,7 +246,7 @@ dot_legend <- function(x, y, cs, ss) {
     if (!is.null(ss) && !same) list(s = ss, col = "grey30", pch = ss$val))
   for (k in Filter(Negate(is.null), keys)) {
     g <- legend(x, y, legend = k$s$lab, title = k$s$title, title.adj = 0, col = k$col,
-                pch = k$pch, bty = "n", xpd = TRUE, cex = 0.85)
+                pch = k$pch, pt.bg = k$col, bty = "n", xpd = TRUE, cex = 0.85)
     y <- g$rect$top - g$rect$h
   }
   y
@@ -257,7 +257,51 @@ plot_defaults <- list(type = "bar", layout = "side", dots = TRUE, color_by = "li
                       labels = "stars",
                       size = 1, brackets = TRUE, scale = "raw", ref = NULL, ylab = "",
                       err = "sem", center = "diamond",
-                      rot = "auto", adj_batch = FALSE, outliers = TRUE)
+                      rot = "auto", adj_batch = FALSE, outliers = TRUE, ybreak = NULL)
+
+# Y-axis break (from, to, share below): the part below keeps its units, the part above
+# is squeezed into the rest; NULL unless from < to inside the range
+y_break <- function(b, rng) {
+  if (length(b) != 3 || anyNA(b) || !(rng[1] < b[1] && b[1] < b[2] && b[2] < rng[2])) return(NULL)
+  below <- b[1] - rng[1]
+  k <- below * (1 - b[3]) / b[3] / (rng[2] - b[2])
+  gap <- 0.04 * below / b[3]
+  list(from = b[1], to = b[2], gap = gap, min = rng[1], share = b[3],
+       f = function(y) ifelse(y <= b[1], y, ifelse(y >= b[2], b[1] + gap + (y - b[2]) * k,
+                                                   b[1] + gap * (y - b[1]) / (b[2] - b[1]))),
+       inv = function(t) ifelse(t <= b[1], t, b[2] + (t - b[1] - gap) / k))
+}
+squeeze <- function(st, br) {
+  if (!is.null(br)) st[c("y", "m", "lo", "hi")] <- lapply(st[c("y", "m", "lo", "hi")], br$f)
+  st
+}
+
+# Y axis in two parts when broken
+break_axis <- function(br) {
+  usr <- par("usr")
+  if (is.null(br)) return(axis(2, las = 1))
+  top <- br$inv(usr[4])
+  n <- function(s) max(2, round(6 * s))  # ticks by each part's height
+  lo <- pretty(c(br$min, br$from), n(br$share)); lo <- lo[lo >= br$min & lo <= br$from]
+  hi <- pretty(c(br$to, top), n(1 - br$share)); hi <- hi[hi >= br$to & hi <= top]
+  axis(2, at = br$f(c(lo, hi)), labels = c(format(lo, trim = TRUE), format(hi, trim = TRUE)), las = 1)
+}
+
+# White band across the break, // on both sides; notes hidden values or an unusable break
+draw_break <- function(br, opt, y) {
+  if (is.null(opt$ybreak)) return()
+  msg <- if (is.null(br)) "Axis break not drawn: needs From < To inside the data range"
+  if (!is.null(br)) {
+    usr <- par("usr")
+    y0 <- br$from + 0.2 * br$gap; y1 <- br$from + 0.8 * br$gap
+    dx <- 0.012 * diff(usr[1:2])
+    rect(usr[1] - dx / 2, y0, usr[2] + dx / 2, y1, col = "white", border = NA, xpd = TRUE)
+    for (x in usr[1:2]) segments(x - dx, c(y0, y1) - 0.2 * br$gap, x + dx, c(y0, y1) + 0.2 * br$gap, xpd = TRUE)
+    n <- sum(y > br$from & y < br$from + br$gap, na.rm = TRUE)
+    if (n) msg <- paste(n, "values inside the axis break are hidden")
+  }
+  if (!is.null(msg)) mtext(msg, side = 1, line = par("mar")[1] - 1, adj = 1, cex = 0.6 * par("cex"))
+}
 
 # Each row's estimated batch shift from the model, all batch terms summed (NULL if none)
 batch_shift <- function(datos, res) {
@@ -394,13 +438,15 @@ err_label <- function(opt) {
 }
 
 # Plot frame: margins (shrunk below 5 in), x labels, title, model note, adjustment; returns old par
-plot_frame <- function(xlabs, k, ylim, ylab, main, note, adjust, opt, scale) {
+plot_frame <- function(xlabs, k, ylim, ylab, main, note, adjust, opt, scale, br = NULL) {
   ang <- label_angle(xlabs, opt)
   op <- par(cex = min(1, min(dev.size("in")) / 5), tcl = -0.25, mgp = c(3, 0.6, 0),
             mar = c(bottom_mar(xlabs, ang), 4.5, if (k > 2) 4.5 else 3.8, 7.5))
-  plot(NA, xlim = c(0.5, length(xlabs) + 0.5), ylim = ylim, xaxt = "n", xlab = "", ylab = ylab, las = 1)
+  plot(NA, xlim = c(0.5, length(xlabs) + 0.5), ylim = ylim, axes = FALSE, xlab = "", ylab = ylab)
+  box()
+  break_axis(br)
   x_labels(seq_along(xlabs), xlabs, ang)
-  if (scale != "raw") abline(h = 1, lty = 3, col = "grey60")
+  if (scale != "raw") abline(h = if (is.null(br)) 1 else br$f(1), lty = 3, col = "grey60")
   title(main = main, line = if (k > 2) 2.6 else 1.6)
   mtext(note, side = 3, line = if (k > 2) 1.2 else 0.4, cex = 0.8 * par("cex"))
   if (k > 2) mtext(paste0("Pairwise p-values: ", adjust_label(adjust, k), "-adjusted"),
@@ -429,6 +475,9 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   pw <- res$pairs
 
   st <- plot_stats(datos, res, opt)
+  br <- y_break(opt$ybreak, range(c(st$y, st$lo, st$hi, if (opt$type == "bar") 0), na.rm = TRUE))
+  st <- squeeze(st, br)
+  base <- if (is.null(br)) 0 else br$f(0)  # bar baseline
   ord <- st$ord
   pos <- match(lev, ord)
   xs <- pos[as.integer(datos$Group)]
@@ -437,14 +486,14 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   ylab <- scale_label(st, res$label, opt)
   y <- st$y; m <- st$m; lo <- st$lo; hi <- st$hi
 
-  rng <- range(c(y, lo, hi, if (opt$type == "bar") 0), na.rm = TRUE)
+  rng <- range(c(y, lo, hi, if (opt$type == "bar") base), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
   n_pairs <- if (opt$brackets) nrow(pw) else 0
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
   op <- plot_frame(group_label(ord, opt), k, c(rng[1] - 0.05 * h, top), ylab, res$label, model_note(opt, st$adjusted),
-                   adjust, opt, scale)
+                   adjust, opt, scale, br)
   on.exit(par(op))
 
   set.seed(1)
@@ -453,7 +502,7 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   xe <- xm + if (side) 0.15 else if (opt$type == "box") 0.3 else 0  # box: mean beside
 
   if (opt$type == "bar") {
-    rect(xm - 0.3, 0, xm + 0.3, m, border = "grey30",
+    rect(xm - 0.3, base, xm + 0.3, m, border = "grey30",
          col = tint(gs$val[match(st$g, gs$lev)], 0.3))
   }
   if (opt$type == "violin") {
@@ -477,11 +526,12 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   if (show_dots) {
     col <- if (is.null(cs)) "grey45" else cs$val[cs$idx]
     points(xj, y, pch = if (is.null(ss)) 19 else ss$val[ss$idx], cex = opt$size,
-           col = tint(col, 0.75))
+           col = tint(col, 0.75), bg = tint(col, 0.75))
     ring_outliers(xj, y, res$out$i, opt)
   }
 
   draw_err(xe, st, opt)
+  draw_break(br, opt, y)
 
   # Brackets for the tested pairs
   for (i in seq_len(n_pairs)) {
@@ -524,7 +574,11 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
   labels <- vapply(results, `[[`, "", "label")
 
   all_v <- unlist(lapply(sts, function(s) c(s$y, s$lo, s$hi)))
-  rng <- range(c(all_v, if (opt$type == "bar") 0), na.rm = TRUE)
+  br <- y_break(opt$ybreak, range(c(all_v, if (opt$type == "bar") 0), na.rm = TRUE))
+  sts <- lapply(sts, squeeze, br)
+  base <- if (is.null(br)) 0 else br$f(0)  # bar baseline
+  all_v <- unlist(lapply(sts, function(s) c(s$y, s$lo, s$hi)))
+  rng <- range(c(all_v, if (opt$type == "bar") base), na.rm = TRUE)
   h <- diff(rng)
   if (h == 0) h <- 1
   n_pairs <- if (opt$brackets) nrow(results[[1]]$pairs) else 0
@@ -533,7 +587,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
   op <- plot_frame(labels, k, c(rng[1] - 0.05 * h, top),
                    scale_label(sts[[1]], if (is.null(main)) "Value" else main, opt),
                    if (is.null(main)) paste(group_label(ord, opt), collapse = " vs ") else main,
-                   model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), adjust, opt, sts[[1]]$scale)
+                   model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), adjust, opt, sts[[1]]$scale, br)
   on.exit(par(op))
 
   set.seed(1)
@@ -543,7 +597,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
     xm <- i + off[match(st$g, ord)]
     xs <- i + off[gi]
     if (opt$type == "bar") {
-      rect(xm - w * 0.4, 0, xm + w * 0.4, st$m, border = "grey30",
+      rect(xm - w * 0.4, base, xm + w * 0.4, st$m, border = "grey30",
            col = tint(cols[match(st$g, ord)], 0.3))
     }
     if (opt$type == "violin") {
@@ -566,7 +620,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
       col <- if (opt$color_by == "group") cols[gi] else if (is.null(cs)) "grey45" else cs$val[cs$idx]
       xd <- xs + runif(length(xs), -w * 0.25, w * 0.25)
       points(xd, st$y, pch = if (is.null(ss)) 19 else ss$val[ss$idx],
-             cex = opt$size, col = tint(col, 0.75))
+             cex = opt$size, col = tint(col, 0.75), bg = tint(col, 0.75))
       ring_outliers(xd, st$y, results[[i]]$out$i, opt)
     }
     draw_err(xm + if (opt$type == "box") w * 0.35 else 0, st, opt, half = w * 0.3)
@@ -581,6 +635,7 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
       bracket_text(mean(xa), yb, pw$p.value[p], opt, 0.65)
     }
   }
+  draw_break(br, opt, unlist(lapply(sts, `[[`, "y")))
   scale_note(opt, sts[[1]]$scale)
 
   usr <- par("usr")
@@ -1173,15 +1228,19 @@ ui <- page_sidebar(
             "Fold change 2^-ΔΔCt (ΔCt data)" = "fc")),
           helpText("Relative: for positive measurements (e.g. amplitude). For ΔCt, use fold change."),
           textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
+          checkboxInput("ybreak", "Y-axis break", FALSE),
+          conditionalPanel("input.ybreak",
+            layout_columns(col_widths = c(6, 6), gap = "0.5rem",
+              numericInput("brk_from", "From", NA), numericInput("brk_to", "To", NA)),
+            sliderInput("brk_share", "Below the break (% of axis)", min = 10, max = 90, value = 50, step = 5)),
           selectInput("rot", "X label angle", choices = c(
             "Auto" = "auto", "Horizontal" = "0", "45°" = "45", "Vertical" = "90")),
           radioButtons("sig", "Significance", inline = TRUE, selected = "stars",
                        choices = c("p-values" = "p", "Stars" = "stars", "Hide" = "none"))),
         accordion_panel("6. Figure size",
+          helpText("Width follows the groups and parameters shown."),
           numericInput("w", "Width (in)", value = 5, min = 3, max = 12, step = 0.5),
-          checkboxInput("square", "Square", TRUE),
-          conditionalPanel("!input.square",
-            numericInput("h", "Height (in)", value = 5, min = 3, max = 12, step = 0.5)))
+          numericInput("h", "Height (in)", value = 5, min = 3, max = 12, step = 0.5))
       )),
       plotOutput("plot", width = "auto", height = "auto", fill = FALSE),
       div(class = "dropdown",
@@ -1696,13 +1755,27 @@ server <- function(input, output, session) {
                        ylab = input$ylab,
                        err = if (isTRUE(input$adj_batch) && input$err %in% c("sem", "sd")) "ci" else input$err,
                        center = input$center, rot = input$rot,
-                       adj_batch = input$adj_batch, outliers = input$outliers))
+                       adj_batch = input$adj_batch, outliers = input$outliers,
+                       ybreak = if (isTRUE(input$ybreak)) c(input$brk_from, input$brk_to, input$brk_share / 100)))
 
   # Size in inches, clamped to 3-12
   dims <- reactive({
     fit <- function(x) if (is.numeric(x) && !is.na(x)) min(max(x, 3), 12) else 5
-    w <- fit(input$w)
-    c(w = w, h = if (isTRUE(input$square)) w else fit(input$h))
+    c(w = fit(input$w), h = fit(input$h))
+  })
+
+  # Width from groups per cluster and clusters (parameters or subsets); edits kept until these change
+  auto_w <- reactive({
+    lev <- levels(results()$prep$datos$Group)
+    split <- identical(input$fig, "split")
+    n <- switch(input$fig, all = max(length(input$multi), 1), split = length(unique(sub("^.*_", "", lev))) + 1, 1)
+    k <- length(if (split) unique(pool_name(lev)) else lev)
+    min(max(round(2 * (2.4 + n * (0.5 * k + 0.3))) / 2, 5), 12)
+  })
+  last_w <- reactiveVal(NULL)
+  observeEvent(auto_w(), if (!identical(auto_w(), last_w())) {
+    last_w(auto_w())
+    updateNumericInput(session, "w", value = auto_w())
   })
 
   # Split and combined: each parameter refit per subset; shared by figure and table

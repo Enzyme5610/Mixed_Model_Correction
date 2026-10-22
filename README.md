@@ -112,6 +112,10 @@ tables keep the original names). Dots can be colored by Line,
 Batch or Group and shaped by Line or Batch, with the color and shape of
 each level selectable.
 
+The Y axis can be broken: the range between From and To is cut out, and the
+part below the break takes a set share of the axis. Figure width follows the
+number of groups and parameters shown and can be edited.
+
 Plots download as PNG, TIFF, JPEG, PDF, SVG or EMF. EMF is editable in PowerPoint.
 
 **All parameters in one figure** shows the selected parameters side by side on
