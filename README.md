@@ -67,7 +67,8 @@ their confidence intervals use the same adjustment. Exact calls:
 [Methods](#methods).
 
 **Model warnings** (e.g. no convergence, or a singular fit: a variance
-estimated as zero, so that term has no effect) are listed under ANOVA results.
+estimated as zero) are listed under ANOVA results. A singular fit keeps the
+chosen model.
 
 **FDR q-values** (Benjamini-Hochberg) for panels of many similar parameters
 (e.g. gene panels). Adjusts the Group p-values (not pairwise) across all

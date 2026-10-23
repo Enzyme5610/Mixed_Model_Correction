@@ -117,8 +117,8 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
     # Singular fit: name the random-effect terms estimated as zero
     th <- lme4::getME(res$MM_Form, "theta")
     zero <- unique(sub("^Batch:Line$", "Line:Batch", sub("\\..*$", "", names(th)[th < 1e-4])))
-    if (length(zero)) warn <- c(warn, paste0("singular fit: ", paste0(term_names[zero], " (", zero, ")", collapse = ", "),
-      " estimated as zero, so ", if (length(zero) > 1) "those terms have" else "that term has", " no effect"))
+    if (length(zero)) warn <- c(warn, paste0(paste(term_names[zero], collapse = " and "),
+      " estimated as zero; model kept as chosen"))
     result_table <- as.data.frame(res$anova)
     res$table <- data.frame(
       Parameter = label,
