@@ -336,7 +336,7 @@ plot_stats <- function(datos, res, opt) {
   # Display scale; stats stay on entered values
   tf <- switch(scale, raw = identity,
                ratio = function(v) v / ref_mean,
-               fc = function(v) 2^-(v - ref_mean))
+               fc = , fc1 = function(v) 2^-(v - ref_mean))
   raw <- datos[[res$var]]
   shift <- if (opt$adj_batch) batch_shift(datos, res)
   y <- tf(if (is.null(shift)) raw else raw - shift)  # display only
@@ -353,6 +353,11 @@ plot_stats <- function(datos, res, opt) {
     a <- if (opt$err == "se") means$emmean - means$SE else means$lower.CL
     b <- if (opt$err == "se") means$emmean + means$SE else means$upper.CL
     lo <- pmin(tf(a), tf(b)); hi <- pmax(tf(a), tf(b))
+  }
+  # Reference bar at 1: all divided by its shown mean (already 1 with model bars)
+  if (scale == "fc1") {
+    k <- unname(m[g == ref])
+    y <- y / k; m <- m / k; lo <- lo / k; hi <- hi / k
   }
   if (opt$type == "bar") lo <- m  # bars: error bar above only
   list(ref = ref, ord = tx_order(datos, opt), scale = scale, y = y,
@@ -376,7 +381,7 @@ scale_label <- function(st, raw, opt) {
   if (nzchar(trimws(opt$ylab))) return(opt$ylab)  # user label wins
   switch(st$scale, raw = raw,
          ratio = paste("Relative to", st$ref),
-         fc = bquote("Fold change vs" ~ .(st$ref) ~ (2^{-Delta*Delta*Ct})))
+         fc = , fc1 = bquote("Fold change vs" ~ .(st$ref) ~ (2^{-Delta*Delta*Ct})))
 }
 
 draw_err <- function(xe, st, opt, half = 0.15) {
@@ -1225,8 +1230,11 @@ ui <- page_sidebar(
           selectInput("scale", "Y axis", choices = c(
             "Values as entered" = "raw",
             "Relative to reference (linear data)" = "ratio",
-            "Fold change 2^-ΔΔCt (ΔCt data)" = "fc")),
+            "Fold change 2^-ΔΔCt (ΔCt data)" = "fc",
+            "Fold change 2^-ΔΔCt, reference bar at 1" = "fc1")),
           helpText("Relative: for positive measurements (e.g. amplitude). For ΔCt, use fold change."),
+          conditionalPanel("input.scale == 'fc1'",
+            helpText("All values divided by the reference's mean, so its bar is 1.")),
           textInput("ylab", "Y-axis label (optional)", placeholder = "Name (units)"),
           checkboxInput("ybreak", "Y-axis break", FALSE),
           conditionalPanel("input.ybreak",
@@ -1366,7 +1374,7 @@ server <- function(input, output, session) {
   output$split_note_plot <- renderUI(split_note(input$plot_param))
 
   # qPCR: one click to fold change 2^-ddCt in tables and plots
-  fc_on <- function() identical(input$scale, "fc")
+  fc_on <- function() isTRUE(input$scale %in% c("fc", "fc1"))
   fc_note <- function(id) div(class = "alert alert-info small py-1 px-2",
     if (fc_on()) "Showing fold change 2^-ΔΔCt. " else "ΔCt data (qPCR)? ",
     actionLink(id, if (fc_on()) "Show values as entered" else "Show fold change 2^-ΔΔCt"),
@@ -1593,7 +1601,7 @@ server <- function(input, output, session) {
     i <- match("Pr(>F)", names(df))
     df <- cbind(df[seq_len(i)], q_FDR = p.adjust(df[[i]], "BH"), df[-seq_len(i)])
     # dCt data: each group's fold change vs the reference (model means)
-    if (identical(input$scale, "fc")) {
+    if (fc_on()) {
       for (g in setdiff(ro$ord, ro$ref)) {
         df[[paste("FC", g, "vs", ro$ref)]] <- vapply(results()$res, function(r) {
           m <- setNames(r$means$emmean, r$means$Group)
@@ -1636,7 +1644,7 @@ server <- function(input, output, session) {
     df$upper.CL <- ifelse(flip, -lo, df$upper.CL)
     df$.a <- NULL; df$.b <- NULL
     # dCt data: fold change of the first group vs the second (2^-estimate)
-    if (identical(input$scale, "fc")) {
+    if (fc_on()) {
       df$Fold_change <- 2^-df$estimate
       df$FC_lower <- 2^-df$upper.CL
       df$FC_upper <- 2^-df$lower.CL

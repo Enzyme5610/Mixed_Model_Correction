@@ -94,7 +94,8 @@ between parameters).
 Dots, bars, box plots or violins showing each sample, with error bars (95% CI or SE, or 
 the raw SEM or SD; none by default for box plots). The Y axis can show values as entered, relative to a 
 reference group (linear data), or as fold change 2^-ΔΔCt (ΔCt data, qPCR). 
-Statistics always use the values as entered.
+With SEM or SD bars, the reference's mean fold change can sit above 1; "reference
+bar at 1" divides all values by it. Statistics always use the values as entered.
 
 **Batch-adjusted values** (optional) subtract each batch's estimated shift
 from the plotted values, using the model's random-effect estimates (BLUPs):
