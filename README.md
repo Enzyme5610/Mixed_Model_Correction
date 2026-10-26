@@ -61,8 +61,9 @@ except in the crossed design, where B1 is one plate or day shared by lines.
 `lmerTest::lmer` (REML), with Group tested by a Type II F test using the
 Kenward-Roger method (small-sample corrected standard errors and degrees of
 freedom). With one Line the model uses `(1 | Batch)`; with one Batch, or no
-line with repeat batches, `(1 | Line)`; with one of each, the parameter is
-skipped. Lines and batches are counted per parameter, where it was measured. Pairwise comparisons use `emmeans`;
+line with repeat batches, `(1 | Line)`; with one of each, `lm(parameter ~ Group)`
+on the cells (Student's t-test for two groups), and results apply to that
+culture only. Lines and batches are counted per parameter, where it was measured. Pairwise comparisons use `emmeans`;
 their confidence intervals use the same adjustment. Exact calls:
 [Methods](#methods).
 

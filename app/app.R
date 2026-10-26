@@ -34,7 +34,9 @@ prepare_data <- function(path) {
 # Random effects; Advanced adds matched pairs (Pair, set in the sidebar) and a
 # treatment effect per line (same line in several groups)
 random_term <- function(datos, design = "nested", line_tx = FALSE) {
-  extra_terms(datos, base_term(datos, design), c(list("Pair"), if (line_tx) list(c("Line", "Group"))))
+  b <- base_term(datos, design)
+  if (!nzchar(b)) return(b)  # one line, one batch: none
+  extra_terms(datos, b, c(list("Pair"), if (line_tx) list(c("Line", "Group"))))
 }
 
 # Extra terms, each only if in the data and estimable
@@ -71,7 +73,18 @@ base_term <- function(datos, design = "nested") {
   }
   else if (nl > 1) "(1|Line)"
   else if (nb > 1) "(1|Batch)"
-  else stop("Something is wrong with the number of Lines or Batches. Please check your data.")
+  else ""  # one line, one batch: cells only, plain linear model
+}
+
+# lm F test in lmerTest's anova layout
+lm_anova <- function(m) {
+  a <- stats::anova(m)
+  data.frame("Sum Sq" = a[1, "Sum Sq"], "Mean Sq" = a[1, "Mean Sq"], NumDF = a[1, "Df"], DenDF = a[2, "Df"],
+             "F value" = a[1, "F value"], "Pr(>F)" = a[1, "Pr(>F)"], row.names = "Group", check.names = FALSE)
+}
+# Residuals / residual SD, for lmer or lm
+scaled_resid <- function(m) {
+  if (inherits(m, "merMod")) residuals(m, type = "pearson", scaled = TRUE) else residuals(m) / sigma(m)
 }
 
 # Random-effect terms in plain words (singular-fit warnings)
@@ -83,24 +96,22 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
   datos <- prep$datos
   n <- length(vars)
   out <- vector("list", n)
-  skipped <- character()
+  single <- character()
   for (i in seq_len(n)) {
     var <- vars[i]
     label <- prep$parameter_labels[match(var, prep$MM_Vars)]
     progress(n, label)
-    # Lines/Batches counted where this parameter was measured; one of each: skipped, as in the script
-    rand <- tryCatch(random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, line_tx),
-                     error = function(e) NULL)
-    if (is.null(rand)) {
-      skipped <- c(skipped, label)
-      next
-    }
-    f <- reformulate(c("Group", rand), var)
+    # Lines/Batches counted where this parameter was measured
+    rand <- random_term(droplevels(datos[!is.na(datos[[var]]), ]), design, line_tx)
+    # One line and one batch: plain linear model (Student's t-test for two groups)
+    mixed <- nzchar(rand)
+    if (!mixed) single <- c(single, label)
+    f <- reformulate(c("Group", if (mixed) rand), var)
     warn <- character()
     res <- withCallingHandlers(
       tryCatch({
-        MM_Form <- lmerTest::lmer(f, data = datos, REML = TRUE)
-        anova_result <- stats::anova(MM_Form, type = "II", ddf = "Kenward-Roger")
+        MM_Form <- if (mixed) lmerTest::lmer(f, data = datos, REML = TRUE) else lm(f, data = datos)
+        anova_result <- if (mixed) stats::anova(MM_Form, type = "II", ddf = "Kenward-Roger") else lm_anova(MM_Form)
         em <- emmeans(MM_Form, specs = "Group", lmer.df = "kenward-roger")
         means <- as.data.frame(summary(em))
         list(MM_Form = MM_Form, anova = anova_result, means = means, em = em)
@@ -115,31 +126,31 @@ run_models <- function(prep, vars, progress = function(n, label) NULL,
       message = function(m) if (grepl("singular", conditionMessage(m))) invokeRestart("muffleMessage")
     )
     # Singular fit: name the random-effect terms estimated as zero
-    th <- lme4::getME(res$MM_Form, "theta")
+    th <- if (mixed) lme4::getME(res$MM_Form, "theta") else numeric()
     zero <- unique(sub("^Batch:Line$", "Line:Batch", sub("\\..*$", "", names(th)[th < 1e-4])))
     if (length(zero)) warn <- c(warn, paste0(paste(term_names[zero], collapse = " and "),
       " estimated as zero; model kept as chosen"))
     result_table <- as.data.frame(res$anova)
+    res$rand <- if (mixed) rand else "none"
+    res$df_method <- if (mixed) "Kenward-Roger" else "Residual"
     res$table <- data.frame(
       Parameter = label,
-      "Random effects" = rand,
-      DF_method = "Kenward-Roger",
+      "Random effects" = res$rand,
+      DF_method = res$df_method,
       result_table,
       row.names = NULL,
       check.names = FALSE
     )
     res$var <- var
     res$label <- label
-    res$rand <- rand
     res$warnings <- unique(warn)
     # Possible outliers: scaled model residual beyond 3
-    r <- residuals(res$MM_Form, type = "pearson", scaled = TRUE)
+    r <- scaled_resid(res$MM_Form)
     res$out <- data.frame(i = match(names(r), rownames(datos)), resid = unname(r))
     res$out <- res$out[abs(res$out$resid) > 3, ]
     out[[i]] <- res
   }
-  out <- out[!vapply(out, is.null, TRUE)]
-  attr(out, "skipped") <- skipped
+  attr(out, "single") <- single
   out
 }
 
@@ -305,6 +316,7 @@ draw_break <- function(br, opt, y) {
 
 # Each row's estimated batch shift from the model, all batch terms summed (NULL if none)
 batch_shift <- function(datos, res) {
+  if (!inherits(res$MM_Form, "merMod")) return(NULL)
   re <- lme4::ranef(res$MM_Form)
   # ranef names: "Batch:Line" from Line/Batch, "Line:Batch" from crossed
   keys <- list(Batch = as.character(datos$Batch),
@@ -364,8 +376,8 @@ plot_stats <- function(datos, res, opt) {
        g = g, m = m, lo = lo, hi = hi, adjusted = !is.null(shift))
 }
 
-model_note <- function(opt, adjusted) {
-  paste0("Linear mixed model, Kenward-Roger",
+model_note <- function(opt, adjusted, mixed = TRUE) {
+  paste0(if (mixed) "Linear mixed model, Kenward-Roger" else "Linear model, one line and one batch",
          if (opt$adj_batch) if (adjusted) "; batch-adjusted values"
                             else "; batch adjustment not possible (no batch term)")
 }
@@ -497,8 +509,8 @@ draw_plot <- function(datos, res, adjust, opt = plot_defaults) {
   n_pairs <- if (opt$brackets) nrow(pw) else 0
   top <- rng[2] + h * (0.05 + 0.1 * n_pairs)
 
-  op <- plot_frame(group_label(ord, opt), k, c(rng[1] - 0.05 * h, top), ylab, res$label, model_note(opt, st$adjusted),
-                   adjust, opt, scale, br)
+  op <- plot_frame(group_label(ord, opt), k, c(rng[1] - 0.05 * h, top), ylab, res$label,
+                   model_note(opt, st$adjusted, inherits(res$MM_Form, "merMod")), adjust, opt, scale, br)
   on.exit(par(op))
 
   set.seed(1)
@@ -592,7 +604,9 @@ draw_multi <- function(datos, results, adjust, opt = plot_defaults, main = NULL)
   op <- plot_frame(labels, k, c(rng[1] - 0.05 * h, top),
                    scale_label(sts[[1]], if (is.null(main)) "Value" else main, opt),
                    if (is.null(main)) paste(group_label(ord, opt), collapse = " vs ") else main,
-                   model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted"))), adjust, opt, sts[[1]]$scale, br)
+                   model_note(opt, all(vapply(sts, `[[`, TRUE, "adjusted")),
+                              any(vapply(results, function(r) inherits(r$MM_Form, "merMod"), TRUE))),
+                   adjust, opt, sts[[1]]$scale, br)
   on.exit(par(op))
 
   set.seed(1)
@@ -722,7 +736,7 @@ coverage <- function(p, vars) {
     data.frame(Parameter = p$parameter_labels[match(v, p$MM_Vars)], n = nrow(s),
                Lines = paste(levels(s$Line), collapse = ", "),
                Batches = paste(levels(s$Batch), collapse = ", "),
-               Testable = nlevels(s$Line) > 1 || nlevels(s$Batch) > 1, check.names = FALSE)
+               Single = nlevels(s$Line) < 2 && nlevels(s$Batch) < 2, check.names = FALSE)
   }))
 }
 
@@ -963,7 +977,7 @@ welcome_page <- function() {
       fb("≥ 2", "≥ 2 in a line", tags$code("y ~ Group + (1|Line/Batch)")),
       fb("≥ 2", "1 per line", tags$code("y ~ Group + (1|Line)")),
       fb("1", "≥ 2", tagList(tags$code("y ~ Group + (1|Batch)"), " (that line only)")),
-      fb("1", "1", "Skipped")),
+      fb("1", "1", tagList(tags$code("y ~ Group"), " (t-test on cells, that culture only)"))),
     p(class = "small text-muted", "y = one parameter.", tags$span(`data-display-if` = "input.advanced",
       `data-ns-prefix` = "", "Crossed with no shared batch runs as Nested.")),
     conditionalPanel("input.advanced",
@@ -1269,7 +1283,8 @@ ui <- page_sidebar(
 **Model.** Regular version: nested, `parameter ~ Group + (1 | Line/Batch)`, fit
 with `lmerTest::lmer` (REML); Group tested by Type II F test, Kenward-Roger method
 (small-sample corrected SEs and df). One Line: `(1 | Batch)`. One Batch, or no
-line with repeat batches: `(1 | Line)`. Warnings, including singular fits (a
+line with repeat batches: `(1 | Line)`. One of each: `lm(parameter ~ Group)`,
+cells only (Student's t-test for two groups). Warnings, including singular fits (a
 variance estimated as zero), appear under ANOVA results.
 
 **FDR.** q-values (Benjamini-Hochberg) for panels of many similar
@@ -1363,12 +1378,12 @@ server <- function(input, output, session) {
       div(class = "text-muted", "From your answers on the Welcome page."))
   })
 
-  # Split and combined: subsets skipped (one line and one batch)
+  # Split and combined: subsets with one line and one batch (linear model on cells)
   split_note <- function(params) {
     s <- split_all()[params]
-    sk <- unlist(Map(function(p, x) if (length(x$skipped)) paste(p, x$skipped), names(s), s))
+    sk <- unlist(Map(function(p, x) if (length(x$single)) paste(p, x$single), names(s), s))
     if (length(sk)) div(class = "alert alert-warning small py-1 px-2",
-      paste0("Subsets skipped, one line and one batch only: ", paste(sk, collapse = "; "), "."))
+      paste0("One line and one batch, cells only: ", paste(sk, collapse = "; "), "."))
   }
   output$split_note_pairs <- renderUI(split_note(names(split_all())))
   output$split_note_plot <- renderUI(split_note(input$plot_param))
@@ -1451,25 +1466,25 @@ server <- function(input, output, session) {
     f <- tryCatch(random_term(d, design(), line_tx()), error = function(e) NULL)
     div(class = "alert alert-info small py-1 px-2 mb-2",
       sprintf("%d line(s), %d batch(es). Model: ", nlevels(d$Line), nlevels(d$Batch)),
-      if (is.null(f)) "can't be tested." else tags$code(f),
+      if (is.null(f)) "can't be tested." else if (nzchar(f)) tags$code(f) else "no random effect (cells only).",
       if (identical(design(), "crossed") && !length(shared_batches(d)))
         " No batch holds several lines, so crossed isn't possible.",
-      if (nlevels(d$Line) == 1) " Results apply to this line only.")
+      if (nlevels(d$Line) == 1) paste0(" Results apply to this line", if (nlevels(d$Batch) == 1) " and batch", " only."))
   })
 
   output$param_warning <- renderUI({
     req(input$params)
     cv <- coverage(prep(), input$params)
-    bad <- cv$Parameter[!cv$Testable]
-    if (length(bad)) div(class = "alert alert-warning small py-1 px-2",
-      paste0("One line and one batch only, will be skipped: ", paste(bad, collapse = ", "), "."))
+    one <- cv$Parameter[cv$Single]
+    if (length(one)) div(class = "alert alert-warning small py-1 px-2",
+      paste0("One line and one batch, cells only (no random effect): ", paste(one, collapse = ", "), "."))
   })
 
   output$design_tbl <- renderTable(design_table(prep()$datos))
   output$coverage_tbl <- renderTable({
     p <- prep()
     cv <- coverage(p, p$MM_Vars[p$numeric])
-    cv$Testable <- ifelse(cv$Testable, "yes", "no")
+    cv$Single <- NULL
     cv
   })
 
@@ -1480,8 +1495,7 @@ server <- function(input, output, session) {
       tryCatch(run_models(p, input$params, function(n, label) incProgress(1 / n, detail = label),
                           design = design(), line_tx = line_tx()),
                error = function(e) validate(conditionMessage(e))))
-    validate(need(length(res) > 0, "No selected parameter can be tested (one line and one batch only)."))
-    list(res = res, skipped = attr(res, "skipped"), prep = p, design = design(),
+    list(res = res, single = attr(res, "single"), prep = p, design = design(),
          advanced = isTRUE(input$advanced), line_tx = line_tx(),
          base = tools::file_path_sans_ext(input$file$name))
   })
@@ -1626,7 +1640,7 @@ server <- function(input, output, session) {
 
   pairs_df <- reactive({
     ord <- ref_order()$ord
-    tab <- function(x) cbind(x$pairs, DF_method = "Kenward-Roger",
+    tab <- function(x) cbind(x$pairs, DF_method = x$df_method,
                              P_adjust = adjust_label(cmp_adjust(), nrow(x$means)))
     if (identical(input$pairs_view, "split")) {
       s <- cmp_split(); ord <- unique(pool_name(ord))
@@ -1688,7 +1702,7 @@ server <- function(input, output, session) {
     r <- results()
     x <- r$res[[match(input$resid_param, param_labels())]]
     req(x)
-    rs <- residuals(x$MM_Form, type = "pearson", scaled = TRUE)
+    rs <- scaled_resid(x$MM_Form)
     col <- ifelse(abs(rs) > 3, "red", "grey40")
     par(mfrow = c(1, 2), mar = c(4, 4, 2, 1), tcl = -0.25, mgp = c(2.5, 0.6, 0))
     # Q-Q with pointwise 95% band around the quartile line
@@ -1744,7 +1758,8 @@ server <- function(input, output, session) {
   # Model warnings (e.g. convergence), per parameter
   output$warn_note <- renderUI({
     w <- c(unlist(lapply(results()$res, function(x) if (length(x$warnings)) paste0(x$label, ": ", x$warnings))),
-           if (length(results()$skipped)) paste0(results()$skipped, ": skipped, one line and one batch only"))
+           if (length(results()$single)) paste0(paste(results()$single, collapse = ", "),
+             ": one line and one batch, so cells are the only replicates; results apply to this culture only"))
     if (length(w)) div(class = "alert alert-warning small py-1 px-2", "Model warnings:",
                        tags$ul(class = "mb-0", lapply(w, tags$li)))
   })
@@ -1798,7 +1813,7 @@ server <- function(input, output, session) {
                           r$design, r$line_tx),
                         error = function(e) validate(paste0(lab, ": ", conditionMessage(e))))
         inter <- tryCatch(split_interaction(sp$datos, x$var, lab, r$design), error = function(e) NULL)
-        list(prep = sp, res = res, inter = inter, skipped = attr(res, "skipped"))
+        list(prep = sp, res = res, inter = inter, single = attr(res, "single"))
       }, sps, labels, r$res), labels))
   })
 
